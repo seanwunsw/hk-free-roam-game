@@ -1,6 +1,8 @@
 #include "HKBakeLibrary.h"
 
 #include "HKAxes.h"
+#include "HKBakePlayer.h"
+#include "HKFreeRoamCharacter.h"
 #include "HKCar.h"
 #include "HKFreeRoam.h"
 #include "HKFreeRoamGameMode.h"
@@ -824,6 +826,10 @@ bool UHKBakeLibrary::BakeWorld()
 	{
 		return false;
 	}
+	if (!HKBakePlayer::Bake())
+	{
+		UE_LOG(LogHK, Warning, TEXT("Player avatar not baked; the world bake continues and the game uses the cube body"));
+	}
 	ConfigurePartition(World);
 	AWorldSettings* Settings = World->GetWorldSettings();
 	Settings->DefaultGameMode = AHKFreeRoamGameMode::StaticClass();
@@ -996,7 +1002,8 @@ bool UHKBakeLibrary::BakeWorld()
 		FHKSpawn Spawn;
 		ReadSpawn(*Player, Spawn);
 		APlayerStart* Start = World->SpawnActor<APlayerStart>(
-			HKAxes::GameToUnreal(Spawn.X, Spawn.Y, Spawn.Z) + FVector(0.0, 0.0, 120.0),
+			HKAxes::GameToUnreal(Spawn.X, Spawn.Y, Spawn.Z)
+				+ FVector(0.0, 0.0, AHKFreeRoamCharacter::DefaultCapsuleHalfHeight + AHKFreeRoamCharacter::GroundClearance),
 			FRotator(0.f, HKAxes::GameYawToUnreal(Spawn.Yaw), 0.f), Params);
 		if (Start)
 		{
@@ -1082,4 +1089,14 @@ bool UHKBakeLibrary::BakeWorld()
 		Imported, Failed, Cars.Num(), Helis.Num());
 	UE_LOG(LogHK, Display, TEXT("HLOD proxies were not generated. Optional: -run=WorldPartitionBuilderCommandlet -Builder=WorldPartitionHLODsBuilder /Game/Maps/HKWorld"));
 	return true;
+}
+
+bool UHKBakeLibrary::BakePlayer()
+{
+	if (!GEditor)
+	{
+		UE_LOG(LogHK, Error, TEXT("BakePlayer needs the editor. Use UnrealEditor-Cmd -run=HKBakeWorld -PlayerOnly."));
+		return false;
+	}
+	return HKBakePlayer::Bake();
 }
