@@ -29,3 +29,6 @@ UnrealProject/Content/*
 *.uasset
 *.umap
 !UnrealProject/Content/Python/**
+
+# Third-party plugins fetched by tools/get_vrm4u.ps1 (pinned + SHA-256 checked).
+UnrealProject/Plugins/VRM4U/

@@ -39,6 +39,16 @@
 		{
 			"Name": "InterchangeEditor",
 			"Enabled": true
+		},
+		{
+			"Name": "IKRig",
+			"Enabled": true
+		},
+		{
+			"Name": "VRM4U",
+			"Enabled": true,
+			"Optional": true,
+			"Description": "Fetched by tools/get_vrm4u.ps1 (gitignored). Only needed to import data/characters/player.vrm."
 		}
 	]
 }
