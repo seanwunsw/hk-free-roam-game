@@ -30,7 +30,7 @@
 
 ## 玩法
 
-步行：WASD、Shift 跑、Space 跳、滑鼠望。水面冇碰撞；角色低過海平面會游（冇 physics volume，係移動模式切換）。
+步行：WASD、Shift 跑、Space 跳、滑鼠望。水面冇碰撞；角色低過海平面會游（bake 咗一個 bWaterVolume 嘅 physics volume，由 CharacterMovement 處理入水出水）。
 
 F：450 cm 內最近嘅車，或者 700 cm 內最近嘅直升機。再按 F 喺載具右邊落車。鏡頭大約 0.6 秒 blend。
 
