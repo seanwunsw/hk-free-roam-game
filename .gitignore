@@ -1,0 +1,31 @@
+# Python
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Source downloads. Regenerate with the URLs in data/README.md.
+data/raw/
+
+# Unreal generated
+UnrealProject/Binaries/
+UnrealProject/Build/
+UnrealProject/Intermediate/
+UnrealProject/Saved/
+UnrealProject/DerivedDataCache/
+UnrealProject/.vs/
+UnrealProject/*.sln
+UnrealProject/*.suo
+UnrealProject/*.opensdf
+UnrealProject/*.sdf
+UnrealProject/*.VC.db
+UnrealProject/*.VC.opendb
+UnrealProject/Content/*
+!UnrealProject/Content/Python/
+!UnrealProject/Content/Python/**
+
+# The baked map and meshes are created on the owner's machine.
+*.uasset
+*.umap
+!UnrealProject/Content/Python/**
