@@ -1,0 +1,72 @@
+01:46:49 wrote warp lut and golden samples
+01:46:50 osm scan 500000  buildings 0  roads 0  water 0
+01:46:50 osm scan 1000000  buildings 0  roads 0  water 0
+01:46:51 osm scan 1500000  buildings 0  roads 0  water 0
+01:46:52 osm scan 2000000  buildings 0  roads 0  water 0
+01:46:52 osm scan 2500000  buildings 0  roads 0  water 0
+01:46:53 osm scan 3000000  buildings 0  roads 0  water 0
+01:46:54 osm scan 3500000  buildings 0  roads 0  water 0
+01:46:57 osm scan 4000000  buildings 88643  roads 30929  water 2710
+01:46:58 osm done records 4152379  buildings 119432  roads 35961  water 2866  coast 1608
+01:46:58 projecting buildings
+01:47:00 building centroids to scale 106703
+01:47:11 buildings inside map 106201  dropped small 502
+01:47:11 merged 28991 small buildings -> 77210 footprints
+01:47:21 overlap cull dropped 3262  remaining 73948
+01:47:21 terrain grid 3025 x 2773  spacing 7.98 x 8.06 m
+01:47:21 inverse warp columns 200/3025
+01:47:21 inverse warp columns 1000/3025
+01:47:21 inverse warp columns 1800/3025
+01:47:21 inverse warp columns 2600/3025
+01:47:21 sampled elevation rows 160/2773
+01:47:22 sampled elevation rows 800/2773
+01:47:22 sampled elevation rows 1440/2773
+01:47:22 sampled elevation rows 2080/2773
+01:47:22 sampled elevation rows 2720/2773
+01:47:22 preparing 35961 roads
+01:48:32 roads kept 35961  bridges 4030  open-cut tunnels 155
+01:48:32 carving tunnels 155 then ground roads 31776
+01:48:35 buffering 31931 drivable centrelines
+01:48:35 buffered 2500/31931
+01:48:35 buffered 5000/31931
+01:48:35 buffered 7500/31931
+01:48:35 buffered 10000/31931
+01:48:35 buffered 12500/31931
+01:48:35 buffered 15000/31931
+01:48:35 buffered 17500/31931
+01:48:35 buffered 20000/31931
+01:48:35 buffered 22500/31931
+01:48:35 buffered 25000/31931
+01:48:35 buffered 27500/31931
+01:48:35 buffered 30000/31931
+01:48:35 buffered 31931/31931
+01:48:36 road overlap query 3000/73948
+01:48:36 road overlap query 18000/73948
+01:48:36 road overlap query 33000/73948
+01:48:36 road overlap query 48000/73948
+01:48:36 road overlap query 63000/73948
+01:48:36 buildings overlapping roads 21813
+01:48:39 cut 17808 footprints  removed 4005  remaining 69943
+01:48:39 buildings on land 69113
+01:48:39 projecting water 2866
+01:48:39 inland water polygons 929
+01:48:41 wrote tiles 400/2821
+01:48:44 wrote tiles 800/2821
+01:48:46 wrote tiles 1200/2821
+01:48:52 wrote tiles 1600/2821
+01:48:55 wrote tiles 2000/2821
+01:48:57 wrote tiles 2400/2821
+01:48:59 wrote tiles 2800/2821
+01:48:59 tile files referenced 2461  triangles 1733530
+01:48:59 spawns player Central  cars 26  helipads 5
+01:48:59 spawn note: Lamma has no ground road within 450 m
+01:48:59 spawn note: CentralHelipad helipad snapped from water/slope to flat land
+01:48:59 spawn note: KaiTakHelipad helipad snapped from water/slope to flat land
+01:48:59 spawn note: TSTHelipad helipad snapped from water/slope to flat land
+01:48:59 spawn note: ShaTinHelipad helipad snapped from water/slope to flat land
+01:48:59 spawn note: LantauHelipad helipad snapped from water/slope to flat land
+01:49:06 previews scale_field.png, harbour_width.png, relief.png, network.png
+01:49:06 heightmap 3025 x 2773  16776650 bytes
+01:49:07 forward samples 68 max error m 5.03474e-06
+inverse samples 68 max error deg 7.67244e-11
+01:49:07 report ok=True long_axis=23420 harbour_min=1519.821444853204 tiles=2461 tris=1733530

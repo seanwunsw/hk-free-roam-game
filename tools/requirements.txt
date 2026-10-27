@@ -1,0 +1,7 @@
+numpy>=1.26
+pillow>=10.0
+matplotlib>=3.8
+scipy>=1.11
+shapely>=2.0
+osmium>=3.7
+pytest>=8.0

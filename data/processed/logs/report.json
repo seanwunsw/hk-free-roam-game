@@ -1,0 +1,230 @@
+{
+  "ok": true,
+  "seconds": 138.3,
+  "extent": {
+    "min_x_m": -12193.275570889611,
+    "max_x_m": 11226.224534466013,
+    "min_y_m": -9814.564286827183,
+    "max_y_m": 11814.845379263736,
+    "width_m": 23419.500105355626,
+    "height_m": 21629.40966609092,
+    "long_axis_m": 23419.500105355626
+  },
+  "long_axis_m": 23419.500105355626,
+  "harbour_game_width_m": {
+    "sections": 26,
+    "min": 1519.821444853204,
+    "median": 2185.7642095905803,
+    "max": 3399.5518894658867
+  },
+  "place_scales": [
+    {
+      "id": "Central",
+      "scale_x": 0.5,
+      "scale_y": 0.5626559701223149,
+      "horizontal": 0.5304036058146263
+    },
+    {
+      "id": "WanChai",
+      "scale_x": 0.5,
+      "scale_y": 0.5005499077433093,
+      "horizontal": 0.5002748783135674
+    },
+    {
+      "id": "CausewayBay",
+      "scale_x": 0.5,
+      "scale_y": 0.5008442638146351,
+      "horizontal": 0.5004219538622556
+    },
+    {
+      "id": "TST",
+      "scale_x": 0.5,
+      "scale_y": 1.057549572456367,
+      "horizontal": 0.7271690217742939
+    },
+    {
+      "id": "YauMaTei",
+      "scale_x": 0.5,
+      "scale_y": 0.5000214470379557,
+      "horizontal": 0.5000107234039864
+    },
+    {
+      "id": "MongKok",
+      "scale_x": 0.5,
+      "scale_y": 0.5000002622408667,
+      "horizontal": 0.5000001311204162
+    },
+    {
+      "id": "KaiTak",
+      "scale_x": 0.5,
+      "scale_y": 0.5005787660841575,
+      "horizontal": 0.5002892993479661
+    },
+    {
+      "id": "ShaTin",
+      "scale_x": 0.5,
+      "scale_y": 0.5,
+      "horizontal": 0.5
+    },
+    {
+      "id": "TuenMun",
+      "scale_x": 0.2966703848771431,
+      "scale_y": 0.5,
+      "horizontal": 0.38514308047603757
+    },
+    {
+      "id": "Lantau",
+      "scale_x": 0.1883889265718608,
+      "scale_y": 0.5,
+      "horizontal": 0.30691116513729244
+    },
+    {
+      "id": "KwunTong",
+      "scale_x": 0.5,
+      "scale_y": 0.5002781455668699,
+      "horizontal": 0.5001390534475737
+    },
+    {
+      "id": "TseungKwanO",
+      "scale_x": 0.5,
+      "scale_y": 0.5000224519003352,
+      "horizontal": 0.5000112258241485
+    },
+    {
+      "id": "TsuenWan",
+      "scale_x": 0.5,
+      "scale_y": 0.5,
+      "horizontal": 0.5
+    },
+    {
+      "id": "KwaiChung",
+      "scale_x": 0.5,
+      "scale_y": 0.5,
+      "horizontal": 0.5
+    },
+    {
+      "id": "YuenLong",
+      "scale_x": 0.4794584253887297,
+      "scale_y": 0.24064511667442276,
+      "horizontal": 0.33967532839198944
+    },
+    {
+      "id": "TaiPo",
+      "scale_x": 0.5,
+      "scale_y": 0.2070086047386576,
+      "horizontal": 0.32172084540689744
+    },
+    {
+      "id": "Fanling",
+      "scale_x": 0.5,
+      "scale_y": 0.1558205615002953,
+      "horizontal": 0.2791241314364411
+    },
+    {
+      "id": "SaiKung",
+      "scale_x": 0.5,
+      "scale_y": 0.5,
+      "horizontal": 0.5
+    },
+    {
+      "id": "Aberdeen",
+      "scale_x": 0.5,
+      "scale_y": 0.5000000000017257,
+      "horizontal": 0.5000000000008629
+    },
+    {
+      "id": "Stanley",
+      "scale_x": 0.5,
+      "scale_y": 0.5,
+      "horizontal": 0.5
+    },
+    {
+      "id": "VictoriaPeak",
+      "scale_x": 0.5,
+      "scale_y": 0.5000140511306529,
+      "horizontal": 0.5000070255159685
+    },
+    {
+      "id": "TaiMoShan",
+      "scale_x": 0.5,
+      "scale_y": 0.4564211571085616,
+      "horizontal": 0.47771390868832864
+    },
+    {
+      "id": "Airport",
+      "scale_x": 0.16341222683964587,
+      "scale_y": 0.5,
+      "horizontal": 0.28584281243337734
+    },
+    {
+      "id": "CheungChau",
+      "scale_x": 0.4927892999634787,
+      "scale_y": 0.5,
+      "horizontal": 0.4963815568509162
+    },
+    {
+      "id": "Lamma",
+      "scale_x": 0.5,
+      "scale_y": 0.5,
+      "horizontal": 0.5
+    }
+  ],
+  "counts": {
+    "osm_buildings": 119432,
+    "osm_roads": 35961,
+    "buildings": 69113,
+    "roads": 35961,
+    "bridges": 4030,
+    "tunnels_open_cut": 155,
+    "water": 929,
+    "tiles": 2461,
+    "triangles": 1733530
+  },
+  "landscape": {
+    "verts_x": 3025,
+    "verts_y": 2773,
+    "spacing_x_m": 7.976025167114956,
+    "spacing_y_m": 8.055342592384891
+  },
+  "native_warp": {
+    "compiled": true,
+    "ok": true,
+    "stdout": "forward samples 68 max error m 5.03474e-06\ninverse samples 68 max error deg 7.67244e-11",
+    "stderr": ""
+  },
+  "spawn_notes": [
+    "Lamma has no ground road within 450 m",
+    "CentralHelipad helipad snapped from water/slope to flat land",
+    "KaiTakHelipad helipad snapped from water/slope to flat land",
+    "TSTHelipad helipad snapped from water/slope to flat land",
+    "ShaTinHelipad helipad snapped from water/slope to flat land",
+    "LantauHelipad helipad snapped from water/slope to flat land"
+  ],
+  "previews": [
+    "scale_field.png",
+    "harbour_width.png",
+    "relief.png",
+    "network.png"
+  ],
+  "data": {
+    "osm": "data/raw/hong-kong-latest.osm.pbf from https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf",
+    "dem": "SRTM N22E113 and N22E114 from https://elevation-tiles-prod.s3.amazonaws.com/skadi/N22/",
+    "lands_dtm": "not downloaded; https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5-digital-terrain-model"
+  },
+  "limitations": [
+    "The warp is separable: scale_x depends only on easting and scale_y only on northing, plus a smooth harbour widening. Islands that share a meridian with the core cannot be 1:10 on both axes without folding the core or pinching it.",
+    "Tunnels, including cross-harbour tubes, are open cuts. The deck is the chord between the portals, clamped so it stays above the water plane. There is no bored tunnel and no tunnel roof.",
+    "Building courtyards (OSM inner rings) are filled. building:part footprints may still overlap the parent footprint when the part is taller.",
+    "Residential, service, footway, path and steps are omitted. Cheung Chau and Lamma only keep unclassified streets, so driving there is local. There is no ferry; walk or fly between islands.",
+    "Terrain is SRTM 1 arc-second, not the Lands Department DTM. Cells at or below 1.5 m are treated as sea and negative bathymetry is scaled by 0.35. Shore noise can remain.",
+    "Minimum road widths (3.2 m / 8 m) are cut out of building footprints, so dense blocks lose a strip along the carriageway.",
+    "HLOD meshes are not built by this script. The Unreal baker assigns an HLOD layer; generating proxies is a separate editor command.",
+    "This environment did not launch Unreal Editor, so the bake, character, cars, helicopter and frame rate were not played."
+  ],
+  "checks": {
+    "long_axis": true,
+    "harbour": true,
+    "native_warp": true,
+    "content": true
+  }
+}
