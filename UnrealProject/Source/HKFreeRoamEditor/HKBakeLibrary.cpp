@@ -181,11 +181,7 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 			Editor->Opacity.Connect(0, Opacity);
 		}
 	}
-	if (bWorldPos)
-	{
-		bool bNeedsRecompile = false;
-		Material->SetMaterialUsage(bNeedsRecompile, MATUSAGE_Landscape);
-	}
+	// Landscape materials need no EMaterialUsage flag; there is no MATUSAGE_Landscape.
 	return FinishMaterial(Material);
 }
 

@@ -27,8 +27,10 @@ AHKPlayerController::AHKPlayerController()
 	bShowMouseCursor = false;
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
-	InputYawScale = 1.f;
-	InputPitchScale = 1.f;
+	// UE5 renamed these members to *_DEPRECATED. The setters keep the legacy scale at 1 so
+	// OnLook owns sensitivity and sign even while bEnableLegacyInputScales is on (the default).
+	SetDeprecatedInputYawScale(1.f);
+	SetDeprecatedInputPitchScale(1.f);
 	BuildInput();
 }
 
@@ -202,11 +204,11 @@ void AHKPlayerController::EnsureMappings()
 	bMappingsApplied = true;
 }
 
-void AHKPlayerController::Possess(APawn* InPawn)
+void AHKPlayerController::OnPossess(APawn* InPawn)
 {
 	AActor* PreviousView = PlayerCameraManager ? PlayerCameraManager->GetViewTarget() : nullptr;
 	const bool bBlend = GetPawn() && GetPawn() != InPawn && PreviousView && PreviousView != InPawn;
-	Super::Possess(InPawn);
+	Super::OnPossess(InPawn);
 	if (bBlend && PlayerCameraManager)
 	{
 		PlayerCameraManager->SetViewTarget(PreviousView);

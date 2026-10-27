@@ -18,7 +18,7 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
-	virtual void Possess(APawn* InPawn) override;
+	virtual void OnPossess(APawn* InPawn) override;
 	virtual void PlayerTick(float DeltaTime) override;
 
 	bool IsMapOpen() const { return bMapOpen; }
