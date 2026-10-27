@@ -16,7 +16,7 @@ This repository is a fixed-layout Hong Kong free-roam prototype for Unreal Engin
 - The map is baked once. Cars, helicopters, helipads, roads and buildings are placed actors. Do not spawn the city at runtime.
 - The warp is separable and monotone. Do not "fix" island scale with a folding 2D field. TST's north-south scale above 1 is the harbour constraint.
 - Tunnels are open cuts clamped above the water plane. Do not pretend they are bored tunnels.
-- Building meshes are one glTF primitive per building. Collision boxes are per primitive, after the final static-mesh build.
+- Building meshes are one glTF primitive per building. Collision is one convex hull per primitive (not an AABB, which covered streets), set after the final static-mesh build.
 - glTF is Y-up metres (X east, Y up, Z north). Unreal is centimetres, X east, Y north, Z up. Fix winding per triangle; a global flip is wrong.
 - Chaos `SpringRate` is N/m. The car uses 45000, not a unitless 150.
 - Landscape `Import` keys both height and layer maps with the same non-empty `FGuid`. Subsection size is 63 quads and there is 1 section per component. `bCanHaveLayersContent` stays false.

@@ -67,7 +67,8 @@ struct FHKSpawn
 
 enum class EHKMeshCollision : uint8
 {
-	Boxes,
+	// One convex hull per building primitive. An AABB per building covered streets.
+	Hulls,
 	Road,
 	None
 };
@@ -325,7 +326,7 @@ UStaticMesh* BuildMesh(
 	const FName& Slot,
 	bool bNanite,
 	EHKMeshCollision Collision,
-	const TArray<FKBoxElem>& Boxes)
+	const TArray<FKConvexElem>& Hulls)
 {
 	const FString PackageName = AssetPath / AssetName;
 	UPackage* Package = CreatePackage(*PackageName);
@@ -361,10 +362,10 @@ UStaticMesh* BuildMesh(
 			Body->CollisionTraceFlag = CTF_UseComplexAsSimple;
 			Body->bDoubleSidedGeometry = true;
 		}
-		else if (Collision == EHKMeshCollision::Boxes)
+		else if (Collision == EHKMeshCollision::Hulls)
 		{
 			Body->CollisionTraceFlag = CTF_UseSimpleAsComplex;
-			Body->AggGeom.BoxElems = Boxes;
+			Body->AggGeom.ConvexElems = Hulls;
 		}
 		else
 		{
@@ -387,7 +388,7 @@ UStaticMesh* BuildMesh(
 	return Mesh;
 }
 
-bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPolygonGroupID Group, const FHKGlbPrim& Prim, TArray<FKBoxElem>& Boxes, bool bBoxes)
+bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPolygonGroupID Group, const FHKGlbPrim& Prim, TArray<FKConvexElem>& Hulls, bool bHulls)
 {
 	const int32 Count = Prim.Positions.Num();
 	if (Count == 0 || Prim.Normals.Num() != Count || Prim.UVs.Num() != Count || Prim.Colors.Num() != Count)
@@ -442,17 +443,21 @@ bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPoly
 		}
 		AddTriangle(Mesh, Group, Instances[I0], Instances[I1], Instances[I2]);
 	}
-	if (bBoxes)
+	if (bHulls)
 	{
+		// Physics cooking builds the hull from this point cloud. Footprints are mostly convex,
+		// so the hull stays close to the real walls instead of spanning the street.
 		const FVector Size = Box.GetSize();
 		if (Size.X > 1.f && Size.Y > 1.f && Size.Z > 1.f)
 		{
-			FKBoxElem Elem;
-			Elem.Center = Box.GetCenter();
-			Elem.X = Size.X;
-			Elem.Y = Size.Y;
-			Elem.Z = Size.Z;
-			Boxes.Add(Elem);
+			FKConvexElem Elem;
+			Elem.VertexData.Reserve(Count);
+			for (int32 Index = 0; Index < Count; ++Index)
+			{
+				Elem.VertexData.Add(FVector(Positions[Mesh.GetVertexInstanceVertex(Instances[Index])]));
+			}
+			Elem.UpdateElemBox();
+			Hulls.Add(MoveTemp(Elem));
 		}
 	}
 	return true;
@@ -473,11 +478,11 @@ UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMateri
 	Attributes.GetVertexInstanceUVs().SetNumChannels(1);
 	const FPolygonGroupID Group = Description.CreatePolygonGroup();
 	Attributes.GetPolygonGroupMaterialSlotNames()[Group] = Slot;
-	TArray<FKBoxElem> Boxes;
+	TArray<FKConvexElem> Hulls;
 	int32 Used = 0;
 	for (const FHKGlbPrim& Prim : Prims)
 	{
-		if (AppendPrim(Description, Attributes, Group, Prim, Boxes, Collision == EHKMeshCollision::Boxes))
+		if (AppendPrim(Description, Attributes, Group, Prim, Hulls, Collision == EHKMeshCollision::Hulls))
 		{
 			++Used;
 		}
@@ -486,7 +491,7 @@ UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMateri
 	{
 		return nullptr;
 	}
-	return BuildMesh(TEXT("/Game/HK/Tiles"), AssetName, Description, Material, Slot, bNanite, Collision, Boxes);
+	return BuildMesh(TEXT("/Game/HK/Tiles"), AssetName, Description, Material, Slot, bNanite, Collision, Hulls);
 }
 
 AStaticMeshActor* SpawnMeshActor(UWorld* World, UStaticMesh* Mesh, const FVector& Location, UHLODLayer* Layer, const FString& Label, bool bCollision)
@@ -572,8 +577,8 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	Face(FVector3f(Max.X, Max.Y, Min.Z), FVector3f(Min.X, Max.Y, Min.Z), FVector3f(Min.X, Max.Y, Max.Z), FVector3f(Max.X, Max.Y, Max.Z), FVector3f(0, 1, 0));
 	Face(FVector3f(Min.X, Min.Y, Min.Z), FVector3f(Max.X, Min.Y, Min.Z), FVector3f(Max.X, Min.Y, Max.Z), FVector3f(Min.X, Min.Y, Max.Z), FVector3f(0, -1, 0));
 
-	TArray<FKBoxElem> NoBoxes;
-	UStaticMesh* Chassis = BuildMesh(TEXT("/Game/HK/Vehicles"), TEXT("SM_HKChassis"), Description, Material, TEXT("Body"), false, EHKMeshCollision::None, NoBoxes);
+	TArray<FKConvexElem> NoHulls;
+	UStaticMesh* Chassis = BuildMesh(TEXT("/Game/HK/Vehicles"), TEXT("SM_HKChassis"), Description, Material, TEXT("Body"), false, EHKMeshCollision::None, NoHulls);
 	if (!Chassis)
 	{
 		return false;
@@ -883,7 +888,7 @@ bool UHKBakeLibrary::BakeWorld()
 				SpawnMeshActor(World, Mesh, Origin, Layer, AssetName, Collision != EHKMeshCollision::None);
 				++Imported;
 			};
-			ImportOne(TEXT("buildings"), Facade, TEXT("Facade"), true, EHKMeshCollision::Boxes, Hlod);
+			ImportOne(TEXT("buildings"), Facade, TEXT("Facade"), true, EHKMeshCollision::Hulls, Hlod);
 			ImportOne(TEXT("roads"), Road, TEXT("Road"), true, EHKMeshCollision::Road, Hlod);
 			ImportOne(TEXT("water"), WaterMat, TEXT("Water"), false, EHKMeshCollision::None, nullptr);
 			if (Index > 0 && Index % 250 == 0)
