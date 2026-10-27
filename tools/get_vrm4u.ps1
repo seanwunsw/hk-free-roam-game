@@ -1,4 +1,4 @@
-# Download the pinned VRM4U release for UE 5.6, check its SHA-256 and unzip it
+# Download the pinned VRM4U release for UE 5.8, check its SHA-256 and unzip it
 # into UnrealProject/Plugins/VRM4U (gitignored).
 #
 #   powershell -ExecutionPolicy Bypass -File tools\get_vrm4u.ps1
@@ -9,8 +9,8 @@
 $ErrorActionPreference = "Stop"
 
 $Tag    = "v1.2026.10.17"
-$Asset  = "VRM4U_5_6_20261017.zip"
-$Sha256 = "bf13ca417daa22fcbbff7e16f4b8103c4dbba65091be94a0c0067f2f53e032db"
+$Asset  = "VRM4U_5_8_20261017.zip"
+$Sha256 = "4ab9d363c006a00c6bf10712b6b5fb79e4aad3ee859927f4ae0216e96f677f3f"
 $Url    = "https://github.com/ruyo/VRM4U/releases/download/$Tag/$Asset"
 
 $Root    = Split-Path -Parent $PSScriptRoot
