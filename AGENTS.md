@@ -29,6 +29,11 @@ This repository is a fixed-layout Hong Kong free-roam prototype for Unreal Engin
 - Ground offsets come from the capsule (`AHKFreeRoamCharacter::GetGroundLift`). Do not reintroduce fixed 110/130 cm lifts.
 - The placeholder model is isolated: its name may appear only in `data/config/player.json` (`placeholder_model`), `data/characters/placeholder/`, the marked block in `data/characters/CREDITS.md`, `data/characters/README.md` and `tools/characters/remove_placeholder.py`. `tools/tests/test_characters.py` enforces this. Elsewhere say "placeholder".
 - VRM4U is an optional, gitignored project plugin fetched by `tools/get_vrm4u.ps1` (pinned tag and SHA-256). Code that needs it goes under `#if HK_WITH_VRM4U`.
+- The VRM4U zip is per engine minor version (`VRM4U_<major>_<minor>_<date>.zip`). When `EngineAssociation` changes, switch `get_vrm4u.py` and `get_vrm4u.ps1` together and pin the hash from a real download (it must equal the GitHub release `digest`). `tools/tests/test_engine.py` checks the asset against `EngineAssociation` and the two scripts against each other.
+- Building needs Visual Studio 2022 17.14+ or Visual Studio 2026, MSVC 14.38+ and Windows SDK 10.0.22621.0+ (UE 5.8 platform SDK table). Target.cs files use `BuildSettingsVersion.Latest` and `EngineIncludeOrderVersion.Latest`; keep them that way so a launcher engine never needs a unique build environment.
+- `r.Substrate=False` in `DefaultEngine.ini` is deliberate. Every baked material is built in C++ on the legacy pins. Do not switch Substrate on in this branch; Substrate conversion of an asset is one-way.
+- Clip retargeting uses UE 5.8 `UIKRetargetBatchOperation::RunBatchRetarget(FIKRetargetBatchOperationInputs)`. A missing or changed engine function in the player bake is an `Error` and makes `HKBakePlayer::Bake` return `Failed`, which stops `BakeWorld`. Do not downgrade these to warnings: a silent failure ships a chibi with no animations. Missing user data (no model, no clips file, no template match) stays a warning.
+- Do not hard-code IK chain names in the bake except the Leg/Foot alignment. UE 5.8 biped templates split `LeftLeg`/`RightLeg` (thigh to ankle) from new `LeftFoot`/`RightFoot` (ball/toe); `AlignFootChains` folds Foot into Leg only when one rig has it and the other does not.
 
 ## What this environment cannot verify
 

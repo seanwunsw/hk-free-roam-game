@@ -1,11 +1,11 @@
 # 點樣開、build、烘焙、玩
 
-引擎版本淨係睇 `UnrealProject/HKFreeRoam.uproject` 嘅 `EngineAssociation`。而家寫住 **5.6**，安裝要同呢個欄位一樣。
+引擎版本淨係睇 `UnrealProject/HKFreeRoam.uproject` 嘅 `EngineAssociation`。而家寫住 **5.8**，安裝要同呢個欄位一樣。
 
 ## 環境
 
 - Unreal Engine，版本 = `EngineAssociation`
-- Visual Studio 2022，「Game development with C++」（MSVC、Windows SDK）
+- Visual Studio 2022 **17.14 或以上**，或者 Visual Studio 2026；「Game development with C++」（MSVC 最低 14.38、Windows SDK 最低 10.0.22621.0）
 - Git LFS
 
 `data/processed` 已經包含高度圖、道路、建築物 glTF、出生點同小地圖。`data/raw` 唔入 git。
