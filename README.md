@@ -8,7 +8,7 @@
 
 - 上面個 Unreal Engine（DX12）
 - Visual Studio 2022，workload「Game development with C++」，包括 MSVC 同 Windows SDK
-- Git LFS（`*.glb`、`*.r16`、`*.png` 用 LFS）
+- Git LFS（`*.glb`、`*.r16`、`*.png`、`*.vrm`、`*.fbx` 用 LFS）
 
 `data/processed` 已經係用真實 OSM 同 SRTM 生成嘅烘焙輸入，平常唔使再跑 Python。想重造先至睇 `data/README.md`。
 
@@ -33,6 +33,17 @@
 烘焙未完成之前，啟動地圖係引擎模板，方便專案開得返。烘焙成功之後 `Config/DefaultEngine.ini` 會改做 `/Game/Maps/HKWorld`。如果命令行冇改到，喺編輯器打開 `Content/Maps/HKWorld`，World Settings 確認 Game Mode 係 `HKFreeRoamGameMode`，然後 Play。
 
 2461 個 Nanite mesh 會喺你部機 build。以 RTX 3060 計，烘焙可能係幾十分鐘到幾個鐘，唔係幾秒。
+
+## 玩家角色
+
+玩家係大約 120 cm 高嘅 chibi 公仔。模型由 `data/config/player.json` 揀，烘焙時匯入，換模型唔使改 code：
+
+- 正式角色：自己用 VRoid 整，export 去 `data/characters/player.vrm`。設計圖同步驟：[docs/characters/VROID.md](docs/characters/VROID.md)。`.vrm` 要 VRM4U plugin：`powershell -ExecutionPolicy Bypass -File tools\get_vrm4u.ps1`，然後重新 generate project files 同 build。
+- 暫代角色：一個 CC BY 4.0 嘅 glb，要自己下載（見 `data/characters/placeholder/README.md`）；冇就用方塊。
+- 動畫：Quaternius Universal Animation Library（CC0），已經喺 repo。
+- 只重烘角色：喺上面個烘焙命令加 `-PlayerOnly`。
+
+換模型、刪暫代角色：[data/characters/README.md](data/characters/README.md)。
 
 ## 操作
 
@@ -71,7 +82,7 @@ python tools/hkwarp/convert.py --x-cm -80011 --y-cm 225634
 
 ## 資料出處
 
-地圖 © OpenStreetMap contributors，ODbL。地形係 NASA/USGS SRTM 1 arc-second（AWS elevation-tiles-prod），唔係地政總署 DTM。詳情同限制見 `docs/STATUS.md` 同 `docs/ARCHITECTURE.md`。
+地圖 © OpenStreetMap contributors，ODbL。角色、動畫同 VRM4U 嘅授權同署名見 [data/characters/CREDITS.md](data/characters/CREDITS.md)。地形係 NASA/USGS SRTM 1 arc-second（AWS elevation-tiles-prod），唔係地政總署 DTM。詳情同限制見 `docs/STATUS.md` 同 `docs/ARCHITECTURE.md`。
 
 ## 已知、未玩過
 

@@ -9,7 +9,7 @@
 | `data/characters/placeholder/` | 暫代角色嘅 folder（唯一一個放佢嘅地方） |
 | `data/characters/animations/UAL1_HK.glb` | CC0 動畫（Quaternius UAL），所有角色共用 |
 | `data/characters/CREDITS.md` | 授權同署名。暫代角色只佔 `BEGIN/END placeholder-credit` 之間一段 |
-| `docs/characters/VROID.md` | 正式角色嘅設計圖同 VRoid 製作步驟 |
+| [`docs/characters/VROID.md`](../../docs/characters/VROID.md) | 正式角色嘅設計圖同 VRoid 製作步驟 |
 
 ## 烘焙點揀模型
 
@@ -31,7 +31,7 @@
 
 ## 換自己嘅 VRoid 模型
 
-1. 跟 `docs/characters/VROID.md` 整角色，export VRM（0.0 或 1.0）。
+1. 跟 [docs/characters/VROID.md](../../docs/characters/VROID.md) 整角色，export VRM（0.0 或 1.0）。
 2. 放落 `data/characters/player.vrm`。
 3. 第一次用 VRM 先要裝 VRM4U：
 
@@ -40,11 +40,13 @@
    ```
 
    然後右鍵 `UnrealProject\HKFreeRoam.uproject` → Generate Visual Studio project files，build **HKFreeRoamEditor**（Development Editor）。`HKFreeRoamEditor.Build.cs` 見到 `Plugins/VRM4U` 先會 link VRM4U。
-4. 重新烘焙：
+4. 重新烘焙。淨係換角色就加 `-PlayerOnly`，只重做 `/Game/HK/Player`，唔使重烘成個世界：
 
    ```bat
-   "<UE>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" UnrealProject\HKFreeRoam.uproject -run=HKBakeWorld -unattended -AllowCommandletRendering -nosplash
+   "<UE>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" UnrealProject\HKFreeRoam.uproject -run=HKBakeWorld -PlayerOnly -unattended -AllowCommandletRendering -nosplash
    ```
+
+   唔加 `-PlayerOnly` 就係成個世界連角色一齊烘（同平時一樣）。喺 editor 入面亦可以用 Python：`unreal.HKBakeLibrary.bake_player()`。
 
 5. Log 應該見到 `Player: importing VRM data/characters/player.vrm`，跟住 `Player: retargeted N clips`。
 6. 入 git：
@@ -59,6 +61,8 @@
 有 `player.vrm` 時暫代角色已經唔會用；要清走佢就做下面。
 
 ## 刪走暫代角色
+
+正式角色點整：[docs/characters/VROID.md](../../docs/characters/VROID.md)（設計圖、顏色、VRoid 步驟）。整好放落 `data/characters/player.vrm`，再刪暫代角色。
 
 ### 一行做晒
 
@@ -97,7 +101,7 @@ python tools\characters\remove_placeholder.py
    ```
 
    應該冇輸出。舊 commit 入面嘅 LFS object 唔會自動消失；CC BY 4.0 冇要求你刪 history，只要求有用到嘅版本帶署名。
-5. 刪 `UnrealProject\Content\HK\Player\`，然後重新烘焙（指令同上面第 4 步）。
+5. 刪 `UnrealProject\Content\HK\Player\`，然後重新烘焙（指令同上面「換自己嘅 VRoid 模型」第 4 步，可以加 `-PlayerOnly`）。
 
 ### 檢查冇殘留
 

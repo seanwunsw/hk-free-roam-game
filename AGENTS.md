@@ -23,7 +23,12 @@ This repository is a fixed-layout Hong Kong free-roam prototype for Unreal Engin
 - Committed `DefaultEngine.ini` points at the engine template map so the editor opens before the bake. The bake rewrites the startup map to `/Game/Maps/HKWorld`.
 - Do not `ConstructorHelpers`-load `/Game/HK/Vehicles/SK_HKCar`. The baker assigns it; `BeginPlay` has a `LoadObject` fallback.
 - Parked helicopters disable gravity. Parked cars hold the handbrake. Neither should be simulated in a constructor.
-- `data/raw` stays untracked. Pipeline outputs are Git LFS (`*.glb`, `*.r16`, `*.png`).
+- `data/raw` stays untracked. Pipeline outputs are Git LFS (`*.glb`, `*.r16`, `*.png`). Character models are LFS too (`*.vrm`, `*.fbx`, `*.glb`); `docs/characters/player-concept.jpg` is a small normal file.
+- The player is data-driven: `data/config/player.json` picks the model; `HKBakePlayer::Bake` writes `/Game/HK/Player/DA_PlayerAvatar`; the character loads it in `BeginPlay` and falls back to the cube. Do not hard-code a model path in C++ and do not commit `.uasset` files for it.
+- No AnimBP. Locomotion is `UHKPlayerAnimInstance` and its proxy. Add a state by adding a clip to `player.json`, `UHKPlayerAvatar` and `BuildLayers`.
+- Ground offsets come from the capsule (`AHKFreeRoamCharacter::GetGroundLift`). Do not reintroduce fixed 110/130 cm lifts.
+- The placeholder model is isolated: its name may appear only in `data/config/player.json` (`placeholder_model`), `data/characters/placeholder/`, the marked block in `data/characters/CREDITS.md`, `data/characters/README.md` and `tools/characters/remove_placeholder.py`. `tools/tests/test_characters.py` enforces this. Elsewhere say "placeholder".
+- VRM4U is an optional, gitignored project plugin fetched by `tools/get_vrm4u.ps1` (pinned tag and SHA-256). Code that needs it goes under `#if HK_WITH_VRM4U`.
 
 ## What this environment cannot verify
 

@@ -47,15 +47,29 @@ Landscape：3025×2773 頂點，每 section 63 quad、每 component 1 section，
 
 全部由烘焙器放進行關，唔係開波先 spawn。
 
-- 玩家：第三人稱膠囊加方塊，行 500、跑 900、跳大約 520（厘米／秒）。中環 PlayerStart。
+- 玩家：第三人稱膠囊，預設 chibi 尺寸（半徑 30、半高 60 厘米），行 500、跑 900、跳大約 520（厘米／秒）。中環 PlayerStart。外觀見下面「玩家角色」；冇烘到就係方塊。
 - 車：`AWheeledVehiclePawn`，一個 Root bone 嘅盒形 skeletal mesh，四個輪用 `AdditionalOffset`。視覺輪係圓柱，跟前進速度轉。質量 1450 kg，彈簧 45000 N/m，四驅，自動波。
 - 直升機：自訂力同一力矩。總距同懸停輔助決定沿機身向上嘅推力；週期變距同偏航係角加速度（`AddTorqueInRadians` 嘅 accel change），唔再乘質量。UE 入面繞本地 +X 嘅正力矩會令右邊升起，所以 roll 取負數，向右推就向右傾。懸停輔助關咗時總距 1.0 = 1.5 倍重量（大約 0.63 懸停），開咗時 = 1.85 倍。無人操時關重力，鎖喺停機坪上。停機坪：中環、啟德、尖沙咀、沙田、大嶼山。
 - HUD：Canvas，唔係 UMG。速度 km/h、高度米、經緯度、小地圖、大地圖、FPS、串流狀態。
 
 小地圖北向上：`u = (x - minx) / 寬`，`v = (maxy - y) / 高`，x、y 係遊戲米（由 Unreal 位置經 `HKAxes::UnrealToGame` 轉返）。像素比例跟地圖，唔係正方形。
 
+## 玩家角色
+
+設定只有一份：`data/config/player.json`。流程：
+
+1. **烘焙**（`HKBakePlayer::Bake`，`BakeWorld` 會叫；`-run=HKBakeWorld -PlayerOnly` 或 `UHKBakeLibrary::BakePlayer` 淨係做呢步）。先刪 `/Game/HK/Player`，再揀模型：`model` 存在就用；否則 `placeholder_model`；兩個都冇就停（log `Player: no model found`），遊戲用方塊，世界照烘。
+2. **匯入**：`.vrm` 經 VRM4U `ImportVRMFileWithOptions`，C++ 開 `bGenerateRigIK`（唔係 UPROPERTY，Python 設唔到），攞佢生成嘅 `IK_<名>_Mannequin` 做 target IK rig。`.glb`／`.gltf`／`.fbx` 經 `UAssetImportTask`（5.6 glTF 行 Interchange）。VRM4U 係 optional project plugin，gitignored；`HKFreeRoamEditor.Build.cs` 見到 `Plugins/VRM4U/VRM4U.uplugin` 先 link，定義 `HK_WITH_VRM4U`。
+3. **物料**（`"materials": "figure"`）：C++ 生成 `M_HKFigureSoft`（Subsurface、Masked、fresnel rim、頭髮 angel ring 用世界法線 Z）、`M_HKFigureEye`（高光、少少自發光）、`M_HKFigureOutline`（unlit、雙面、只留背面、沿法線推出，用 `SetOverlayMaterial`）。每個 slot 按 slot 名／原物料名分類（line／eye／hair／skin／其他當 cloth），由原物料嘅 texture parameter 揀 base colour 貼圖，冇就白色。冇 `.uasset` 入 git。
+4. **動畫**：匯入 `data/characters/animations/UAL1_HK.glb`（CC0，LFS），code 建 `IK_UAL`（auto retarget definition）、target rig、`RTG_UAL_To_Player`（`AddDefaultOps`、fuzzy chain map、target auto-align），用 `UIKRetargetBatchOperation::DuplicateAndRetarget` 複製出 `_HK` clip。IK Rig Editor 嗰幾個 call 用反射 call UFUNCTION，唔靠 DLL export。
+5. **Data asset**：`/Game/HK/Player/DA_PlayerAvatar`（`UHKPlayerAvatar`）：mesh、縮放（`target_height_cm` ÷ bounds 高度）、腳底 Z、yaw、描邊、11 段 clip、參考速度（180 cm 數值 × 身高/180）。
+6. **Runtime**：`AHKFreeRoamCharacter::BeginPlay` 用 `LoadObject` 讀 data asset；冇就保留方塊同 warning。有就按身高設 capsule（半高 = 身高/2，半徑 = 身高×0.23）、mesh offset、鏡頭距離，set `UHKPlayerAnimInstance`。落車、傳送、PlayerStart 高度都由 capsule 計（`GetGroundLift` = 半高 + 20）。
+7. **動畫 instance**：`UHKPlayerAnimInstance` 冇 AnimBP、冇 anim graph。Proxy `PreUpdate`（game thread）問 instance 攞最多 6 層 (clip, 時間, 權重)；`Evaluate` 抽 pose 再兩兩 `BlendTwoPosesTogether`。地面 idle→walk→jog→sprint 按速度分段線性、共用 phase；空中 jump start 再 fall loop；水中 swim idle／forward。
+
+暫代角色只喺四個地方出現：`player.json` 嘅 `placeholder_model`、`data/characters/placeholder/`、`CREDITS.md` 一段 marker、`data/characters/README.md`。`tools/characters/remove_placeholder.py` 一次刪晒。
+
 ## 模組
 
 - `HKFreeRoam`：runtime。Enhanced Input、Chaos Vehicles、JSON、ImageWrapper。
-- `HKFreeRoamEditor`：commandlet、glTF 讀取、材質、Landscape、Nanite、World Partition。
-- 插件：Enhanced Input、Chaos Vehicles、Python、Editor Scripting、Interchange。Interchange 開住，但烘焙主路徑係 HKGM，唔依賴 Interchange 嘅軸轉換。
+- `HKFreeRoamEditor`：commandlet、glTF 讀取、材質、Landscape、Nanite、World Partition、玩家角色烘焙（IKRig、IKRigEditor、AssetTools；VRM4U optional）。
+- 插件：Enhanced Input、Chaos Vehicles、Python、Editor Scripting、Interchange、IK Rig；VRM4U（optional，`tools/get_vrm4u.ps1` 下載）。Interchange 開住，但烘焙主路徑係 HKGM，唔依賴 Interchange 嘅軸轉換。
