@@ -62,11 +62,11 @@ HK.ToLatLon
 
 ## 座標
 
-遊戲 +X 東、+Y 北、Z 向上。Python 同 C++ 用同一份 `data/processed/warp_lut.bin`。
+遊戲資料（manifest、spawns、landmarks、warp）係米，+X 東、+Y 北、Z 向上。Unreal 係左手座標，所以喺 Unreal 入面北係 −Y：`ue_cm = (東, −北, 上) × 100`，只經 `HKAxes.h` 轉換。`convert.py` 同 `HK.ToLatLon` 用嘅係 Unreal 厘米（編輯器見到嘅座標）。Python 同 C++ 用同一份 `data/processed/warp_lut.bin`。
 
 ```bat
 python tools/hkwarp/convert.py --lat 22.2849 --lon 114.1583
-python tools/hkwarp/convert.py --x-cm -80011 --y-cm -225634
+python tools/hkwarp/convert.py --x-cm -80011 --y-cm 225634
 ```
 
 ## 資料出處

@@ -1417,8 +1417,8 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
     ]
     manifest = {
         "version": 1,
-        "units": "game metres; Unreal cm = metres * 100; +X east, +Y north, +Z up",
-        "axis_note": "glTF tiles are Y-up metres relative to the tile origin: ue_cm = (gltf.x, gltf.z, gltf.y) * 100",
+        "units": "game metres; +X east, +Y north, +Z up; Unreal cm = (x, -y, z) * 100 because Unreal is left-handed",
+        "axis_note": "glTF tiles are Y-up metres relative to the tile origin: ue_cm = (gltf.x, -gltf.z, gltf.y) * 100",
         "landscape": {
             "min_x_m": landscape["min_x"],
             "min_y_m": landscape["min_y"],

@@ -63,36 +63,3 @@ void AHKFreeRoamCharacter::SetSprinting(bool bInSprinting)
 	bSprinting = bInSprinting;
 	GetCharacterMovement()->MaxWalkSpeed = bSprinting ? 900.f : 500.f;
 }
-
-void AHKFreeRoamCharacter::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-	if (GetAttachParentActor())
-	{
-		return;
-	}
-	UpdateSwim(GetActorLocation().Z);
-}
-
-void AHKFreeRoamCharacter::UpdateSwim(float Z)
-{
-	// There is no physics volume. Below the water plane (Z = 0 cm) the pawn is forced to swim
-	// and given a small upward speed so it does not walk the bathymetry.
-	UCharacterMovementComponent* Move = GetCharacterMovement();
-	const bool bSwimming = Move->MovementMode == MOVE_Swimming;
-	if (Z < 20.f && (!Move->IsMovingOnGround() || Z < 5.f))
-	{
-		if (!bSwimming)
-		{
-			Move->SetMovementMode(MOVE_Swimming);
-		}
-		if (Z < 0.f && Move->Velocity.Z < 80.f)
-		{
-			Move->Velocity.Z = 80.f;
-		}
-	}
-	else if (bSwimming && (Z > 150.f || (Move->IsMovingOnGround() && Z > 80.f)))
-	{
-		Move->SetMovementMode(MOVE_Walking);
-	}
-}

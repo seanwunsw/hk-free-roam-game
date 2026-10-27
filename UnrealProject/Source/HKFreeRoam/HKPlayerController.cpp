@@ -1,5 +1,6 @@
 #include "HKPlayerController.h"
 
+#include "HKAxes.h"
 #include "HKCar.h"
 #include "HKFreeRoam.h"
 #include "HKFreeRoamCharacter.h"
@@ -27,8 +28,10 @@ AHKPlayerController::AHKPlayerController()
 	bShowMouseCursor = false;
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
-	InputYawScale = 1.f;
-	InputPitchScale = 1.f;
+	// UE5 renamed these members to *_DEPRECATED. The setters keep the legacy scale at 1 so
+	// OnLook owns sensitivity and sign even while bEnableLegacyInputScales is on (the default).
+	SetDeprecatedInputYawScale(1.f);
+	SetDeprecatedInputPitchScale(1.f);
 	BuildInput();
 }
 
@@ -202,11 +205,11 @@ void AHKPlayerController::EnsureMappings()
 	bMappingsApplied = true;
 }
 
-void AHKPlayerController::Possess(APawn* InPawn)
+void AHKPlayerController::OnPossess(APawn* InPawn)
 {
 	AActor* PreviousView = PlayerCameraManager ? PlayerCameraManager->GetViewTarget() : nullptr;
 	const bool bBlend = GetPawn() && GetPawn() != InPawn && PreviousView && PreviousView != InPawn;
-	Super::Possess(InPawn);
+	Super::OnPossess(InPawn);
 	if (bBlend && PlayerCameraManager)
 	{
 		PlayerCameraManager->SetViewTarget(PreviousView);
@@ -611,8 +614,9 @@ void AHKPlayerController::TeleportToGameMetres(double XMetres, double YMetres, d
 	{
 		return;
 	}
-	const double Xcm = XMetres * 100.0;
-	const double Ycm = YMetres * 100.0;
+	const FVector Target = HKAxes::GameToUnreal(XMetres, YMetres, 0.0);
+	const double Xcm = Target.X;
+	const double Ycm = Target.Y;
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(HKTeleport), false, Pawn);
 	double Z = ZHintMetres * 100.0;
@@ -644,7 +648,7 @@ void AHKPlayerController::TeleportToGameMetres(double XMetres, double YMetres, d
 	}
 	if (bFaceYaw)
 	{
-		SetControlRotation(FRotator(-12.f, (float)YawDegrees, 0.f));
+		SetControlRotation(FRotator(-12.f, HKAxes::GameYawToUnreal(YawDegrees), 0.f));
 	}
 }
 
@@ -652,7 +656,8 @@ void AHKPlayerController::PrintLonLat(double XCm, double YCm) const
 {
 	UHKGameInstance* Game = GetGameInstance<UHKGameInstance>();
 	double Lon = 0, Lat = 0;
-	if (!Game || !Game->GameMetresToLonLat(XCm / 100.0, YCm / 100.0, Lon, Lat))
+	const FVector2D Game2D = HKAxes::UnrealToGame(FVector(XCm, YCm, 0.0));
+	if (!Game || !Game->GameMetresToLonLat(Game2D.X, Game2D.Y, Lon, Lat))
 	{
 		UE_LOG(LogHK, Warning, TEXT("Warp LUT is not loaded"));
 		return;

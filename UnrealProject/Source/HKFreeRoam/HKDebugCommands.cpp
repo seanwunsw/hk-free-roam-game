@@ -87,5 +87,5 @@ static FAutoConsoleCommandWithWorldAndArgs CmdToGame(
 
 static FAutoConsoleCommandWithWorldAndArgs CmdToLatLon(
 	TEXT("HK.ToLatLon"),
-	TEXT("Print latitude and longitude for game centimetres, or for the player if omitted."),
+	TEXT("Print latitude and longitude for Unreal centimetres (north is -Y), or for the player if omitted."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HKToLatLon));

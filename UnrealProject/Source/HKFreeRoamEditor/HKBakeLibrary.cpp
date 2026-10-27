@@ -1,5 +1,6 @@
 #include "HKBakeLibrary.h"
 
+#include "HKAxes.h"
 #include "HKCar.h"
 #include "HKFreeRoam.h"
 #include "HKFreeRoamGameMode.h"
@@ -7,7 +8,9 @@
 #include "HKHelicopter.h"
 
 #include "Animation/Skeleton.h"
+#include "ActorFactories/ActorFactory.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Builders/CubeBuilder.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
@@ -24,6 +27,7 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "FileHelpers.h"
+#include "GameFramework/PhysicsVolume.h"
 #include "GameFramework/PlayerStart.h"
 #include "Landscape.h"
 #include "LandscapeInfo.h"
@@ -47,6 +51,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "StaticMeshAttributes.h"
 #include "StaticToSkeletalMeshConverter.h"
+#include "UObject/Linker.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UnrealType.h"
 #include "WorldPartition/HLOD/HLODLayer.h"
@@ -67,7 +72,8 @@ struct FHKSpawn
 
 enum class EHKMeshCollision : uint8
 {
-	Boxes,
+	// One convex hull per building primitive. An AABB per building covered streets.
+	Hulls,
 	Road,
 	None
 };
@@ -147,6 +153,8 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	Custom->OutputType = CMOT_Float3;
 	Custom->Description = AssetName;
 	Custom->Code = Code;
+	// The constructor adds one unnamed input. Clear it so Inputs[0..2] are UV, VertColor, WorldPos.
+	Custom->Inputs.Reset();
 	FCustomInput& UV = Custom->Inputs.AddDefaulted_GetRef();
 	UV.InputName = TEXT("UV");
 	FCustomInput& Color = Custom->Inputs.AddDefaulted_GetRef();
@@ -181,11 +189,7 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 			Editor->Opacity.Connect(0, Opacity);
 		}
 	}
-	if (bWorldPos)
-	{
-		bool bNeedsRecompile = false;
-		Material->SetMaterialUsage(bNeedsRecompile, MATUSAGE_Landscape);
-	}
+	// Landscape materials need no EMaterialUsage flag; there is no MATUSAGE_Landscape.
 	return FinishMaterial(Material);
 }
 
@@ -306,8 +310,7 @@ void MarkSpatial(AActor* Actor, UHLODLayer* Layer, bool bSpatial)
 
 FVector3f ToUnreal(const FVector3f& GlTf, bool bNormal)
 {
-	const float Scale = bNormal ? 1.f : 100.f;
-	return FVector3f(GlTf.X * Scale, GlTf.Z * Scale, GlTf.Y * Scale);
+	return HKAxes::GltfToUnreal(GlTf, bNormal ? 1.f : 100.f);
 }
 
 void AddTriangle(FMeshDescription& Mesh, FPolygonGroupID Group, FVertexInstanceID A, FVertexInstanceID B, FVertexInstanceID C)
@@ -327,7 +330,7 @@ UStaticMesh* BuildMesh(
 	const FName& Slot,
 	bool bNanite,
 	EHKMeshCollision Collision,
-	const TArray<FKBoxElem>& Boxes)
+	const TArray<FKConvexElem>& Hulls)
 {
 	const FString PackageName = AssetPath / AssetName;
 	UPackage* Package = CreatePackage(*PackageName);
@@ -363,10 +366,10 @@ UStaticMesh* BuildMesh(
 			Body->CollisionTraceFlag = CTF_UseComplexAsSimple;
 			Body->bDoubleSidedGeometry = true;
 		}
-		else if (Collision == EHKMeshCollision::Boxes)
+		else if (Collision == EHKMeshCollision::Hulls)
 		{
 			Body->CollisionTraceFlag = CTF_UseSimpleAsComplex;
-			Body->AggGeom.BoxElems = Boxes;
+			Body->AggGeom.ConvexElems = Hulls;
 		}
 		else
 		{
@@ -389,7 +392,7 @@ UStaticMesh* BuildMesh(
 	return Mesh;
 }
 
-bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPolygonGroupID Group, const FHKGlbPrim& Prim, TArray<FKBoxElem>& Boxes, bool bBoxes)
+bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPolygonGroupID Group, const FHKGlbPrim& Prim, TArray<FKConvexElem>& Hulls, bool bHulls)
 {
 	const int32 Count = Prim.Positions.Num();
 	if (Count == 0 || Prim.Normals.Num() != Count || Prim.UVs.Num() != Count || Prim.Colors.Num() != Count)
@@ -444,17 +447,21 @@ bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPoly
 		}
 		AddTriangle(Mesh, Group, Instances[I0], Instances[I1], Instances[I2]);
 	}
-	if (bBoxes)
+	if (bHulls)
 	{
+		// Physics cooking builds the hull from this point cloud. Footprints are mostly convex,
+		// so the hull stays close to the real walls instead of spanning the street.
 		const FVector Size = Box.GetSize();
 		if (Size.X > 1.f && Size.Y > 1.f && Size.Z > 1.f)
 		{
-			FKBoxElem Elem;
-			Elem.Center = Box.GetCenter();
-			Elem.X = Size.X;
-			Elem.Y = Size.Y;
-			Elem.Z = Size.Z;
-			Boxes.Add(Elem);
+			FKConvexElem Elem;
+			Elem.VertexData.Reserve(Count);
+			for (int32 Index = 0; Index < Count; ++Index)
+			{
+				Elem.VertexData.Add(FVector(Positions[Mesh.GetVertexInstanceVertex(Instances[Index])]));
+			}
+			Elem.UpdateElemBox();
+			Hulls.Add(MoveTemp(Elem));
 		}
 	}
 	return true;
@@ -475,11 +482,11 @@ UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMateri
 	Attributes.GetVertexInstanceUVs().SetNumChannels(1);
 	const FPolygonGroupID Group = Description.CreatePolygonGroup();
 	Attributes.GetPolygonGroupMaterialSlotNames()[Group] = Slot;
-	TArray<FKBoxElem> Boxes;
+	TArray<FKConvexElem> Hulls;
 	int32 Used = 0;
 	for (const FHKGlbPrim& Prim : Prims)
 	{
-		if (AppendPrim(Description, Attributes, Group, Prim, Boxes, Collision == EHKMeshCollision::Boxes))
+		if (AppendPrim(Description, Attributes, Group, Prim, Hulls, Collision == EHKMeshCollision::Hulls))
 		{
 			++Used;
 		}
@@ -488,7 +495,7 @@ UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMateri
 	{
 		return nullptr;
 	}
-	return BuildMesh(TEXT("/Game/HK/Tiles"), AssetName, Description, Material, Slot, bNanite, Collision, Boxes);
+	return BuildMesh(TEXT("/Game/HK/Tiles"), AssetName, Description, Material, Slot, bNanite, Collision, Hulls);
 }
 
 AStaticMeshActor* SpawnMeshActor(UWorld* World, UStaticMesh* Mesh, const FVector& Location, UHLODLayer* Layer, const FString& Label, bool bCollision)
@@ -574,8 +581,8 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	Face(FVector3f(Max.X, Max.Y, Min.Z), FVector3f(Min.X, Max.Y, Min.Z), FVector3f(Min.X, Max.Y, Max.Z), FVector3f(Max.X, Max.Y, Max.Z), FVector3f(0, 1, 0));
 	Face(FVector3f(Min.X, Min.Y, Min.Z), FVector3f(Max.X, Min.Y, Min.Z), FVector3f(Max.X, Min.Y, Max.Z), FVector3f(Min.X, Min.Y, Max.Z), FVector3f(0, -1, 0));
 
-	TArray<FKBoxElem> NoBoxes;
-	UStaticMesh* Chassis = BuildMesh(TEXT("/Game/HK/Vehicles"), TEXT("SM_HKChassis"), Description, Material, TEXT("Body"), false, EHKMeshCollision::None, NoBoxes);
+	TArray<FKConvexElem> NoHulls;
+	UStaticMesh* Chassis = BuildMesh(TEXT("/Game/HK/Vehicles"), TEXT("SM_HKChassis"), Description, Material, TEXT("Body"), false, EHKMeshCollision::None, NoHulls);
 	if (!Chassis)
 	{
 		return false;
@@ -642,7 +649,7 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	const int32 QuadsPerSection = (int32)LandscapeObject->GetNumberField(TEXT("quads_per_section"));
 	const int32 Sections = (int32)LandscapeObject->GetNumberField(TEXT("sections_per_component"));
 	const double MinX = LandscapeObject->GetNumberField(TEXT("min_x_m"));
-	const double MinY = LandscapeObject->GetNumberField(TEXT("min_y_m"));
+	const double MaxY = LandscapeObject->GetNumberField(TEXT("max_y_m"));
 	const double SpacingX = LandscapeObject->GetNumberField(TEXT("spacing_x_m"));
 	const double SpacingY = LandscapeObject->GetNumberField(TEXT("spacing_y_m"));
 	const double ZScale = LandscapeObject->GetNumberField(TEXT("z_scale_cm"));
@@ -662,7 +669,12 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	}
 	TArray<uint16> Heights;
 	Heights.SetNumUninitialized(VertsX * VertsY);
-	FMemory::Memcpy(Heights.GetData(), Bytes.GetData(), Bytes.Num());
+	// terrain.r16 row 0 is the south edge. North is UE -Y, so landscape row 0 must be the
+	// north edge: reverse the rows and anchor the actor at the northern boundary.
+	for (int32 Row = 0; Row < VertsY; ++Row)
+	{
+		FMemory::Memcpy(&Heights[Row * VertsX], Bytes.GetData() + (VertsY - 1 - Row) * VertsX * 2, VertsX * 2);
+	}
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -677,7 +689,7 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	Landscape->LandscapeMaterial = Material;
 	Landscape->SetActorTransform(FTransform(
 		FRotator::ZeroRotator,
-		FVector(MinX * 100.0, MinY * 100.0, 0.0),
+		HKAxes::GameToUnreal(MinX, MaxY, 0.0),
 		FVector(SpacingX * 100.0, SpacingY * 100.0, ZScale)));
 
 	TMap<FGuid, TArray<uint16>> HeightData;
@@ -693,7 +705,7 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	Landscape->SetActorLabel(TEXT("HKLandscape"));
 	MarkSpatial(Landscape, nullptr, false);
 	Landscape->PostEditChange();
-	UE_LOG(LogHK, Display, TEXT("Landscape %dx%d at (%.0f, %.0f) m"), VertsX, VertsY, MinX, MinY);
+	UE_LOG(LogHK, Display, TEXT("Landscape %dx%d, north-west corner at (%.0f, %.0f) m"), VertsX, VertsY, MinX, MaxY);
 	return true;
 }
 
@@ -743,6 +755,38 @@ void SpawnAtmosphere(UWorld* World)
 		MarkSpatial(Fog, nullptr, false);
 	}
 }
+
+const TCHAR* MapPackage = TEXT("/Game/Maps/HKWorld");
+
+bool DeleteOldMap()
+{
+	// World Partition saves every actor as its own package with a new GUID name, so saving a
+	// fresh world over the old map left the previous bake's actors on disk and loaded both.
+	// Delete the old map and its external packages first. Runs after NewBlankMap so the old
+	// world is no longer the editor world.
+	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+	if (UPackage* Old = FindPackage(nullptr, MapPackage))
+	{
+		ResetLoaders(Old);
+	}
+	IFileManager& Files = IFileManager::Get();
+	const FString MapFile = FPackageName::LongPackageNameToFilename(MapPackage, FPackageName::GetMapPackageExtension());
+	if (Files.FileExists(*MapFile) && !Files.Delete(*MapFile, false, true, true))
+	{
+		UE_LOG(LogHK, Error, TEXT("Could not delete %s. Close it in the editor and bake again."), *MapFile);
+		return false;
+	}
+	for (const TCHAR* Root : {TEXT("__ExternalActors__"), TEXT("__ExternalObjects__")})
+	{
+		const FString Dir = FPaths::Combine(FPaths::ProjectContentDir(), Root, TEXT("Maps"), TEXT("HKWorld"));
+		if (Files.DirectoryExists(*Dir) && !Files.DeleteDirectory(*Dir, false, true))
+		{
+			UE_LOG(LogHK, Error, TEXT("Could not delete %s. Close the map in the editor and bake again."), *Dir);
+			return false;
+		}
+	}
+	return true;
+}
 }
 
 bool UHKBakeLibrary::BakeWorld()
@@ -774,6 +818,10 @@ bool UHKBakeLibrary::BakeWorld()
 	if (!World)
 	{
 		UE_LOG(LogHK, Error, TEXT("Could not create a blank map"));
+		return false;
+	}
+	if (!DeleteOldMap())
+	{
 		return false;
 	}
 	ConfigurePartition(World);
@@ -830,7 +878,7 @@ bool UHKBakeLibrary::BakeWorld()
 	if (UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane")))
 	{
 		AStaticMeshActor* Sea = World->SpawnActor<AStaticMeshActor>(
-			FVector((MinX + MaxX) * 50.0, (MinY + MaxY) * 50.0, 0.0), FRotator::ZeroRotator, Params);
+			HKAxes::GameToUnreal((MinX + MaxX) * 0.5, (MinY + MaxY) * 0.5, 0.0), FRotator::ZeroRotator, Params);
 		if (Sea)
 		{
 			UStaticMeshComponent* Component = Sea->GetStaticMeshComponent();
@@ -843,6 +891,21 @@ bool UHKBakeLibrary::BakeWorld()
 			Sea->SetActorLabel(TEXT("HKSea"));
 			MarkSpatial(Sea, nullptr, false);
 		}
+	}
+	// CharacterMovement only swims inside a physics volume with bWaterVolume. The box spans the
+	// map from the sea plane (Z = 0) down to KillZ. Land is above Z = 0, so it never reaches it.
+	if (APhysicsVolume* Water = World->SpawnActor<APhysicsVolume>(
+		HKAxes::GameToUnreal((MinX + MaxX) * 0.5, (MinY + MaxY) * 0.5, 0.0) + FVector(0.0, 0.0, Settings->KillZ * 0.5), FRotator::ZeroRotator, Params))
+	{
+		UCubeBuilder* Builder = NewObject<UCubeBuilder>();
+		Builder->X = (MaxX - MinX) * 100.0;
+		Builder->Y = (MaxY - MinY) * 100.0;
+		Builder->Z = -Settings->KillZ;
+		UActorFactory::CreateBrushForVolumeActor(Water, Builder);
+		Water->bWaterVolume = true;
+		Water->FluidFriction = 0.6f;
+		Water->SetActorLabel(TEXT("HKSeaWater"));
+		MarkSpatial(Water, nullptr, false);
 	}
 
 	UPackage* HlodPackage = CreatePackage(TEXT("/Game/HK/HL_Buildings"));
@@ -867,7 +930,7 @@ bool UHKBakeLibrary::BakeWorld()
 			}
 			const int32 Ix = (int32)Tile->GetNumberField(TEXT("ix"));
 			const int32 Iy = (int32)Tile->GetNumberField(TEXT("iy"));
-			const FVector Origin(Tile->GetNumberField(TEXT("origin_x_m")) * 100.0, Tile->GetNumberField(TEXT("origin_y_m")) * 100.0, 0.0);
+			const FVector Origin = HKAxes::GameToUnreal(Tile->GetNumberField(TEXT("origin_x_m")), Tile->GetNumberField(TEXT("origin_y_m")), 0.0);
 			auto ImportOne = [&](const TCHAR* Field, UMaterial* Material, const FName& Slot, bool bNanite, EHKMeshCollision Collision, UHLODLayer* Layer)
 			{
 				FString Relative;
@@ -885,7 +948,7 @@ bool UHKBakeLibrary::BakeWorld()
 				SpawnMeshActor(World, Mesh, Origin, Layer, AssetName, Collision != EHKMeshCollision::None);
 				++Imported;
 			};
-			ImportOne(TEXT("buildings"), Facade, TEXT("Facade"), true, EHKMeshCollision::Boxes, Hlod);
+			ImportOne(TEXT("buildings"), Facade, TEXT("Facade"), true, EHKMeshCollision::Hulls, Hlod);
 			ImportOne(TEXT("roads"), Road, TEXT("Road"), true, EHKMeshCollision::Road, Hlod);
 			ImportOne(TEXT("water"), WaterMat, TEXT("Water"), false, EHKMeshCollision::None, nullptr);
 			if (Index > 0 && Index % 250 == 0)
@@ -933,8 +996,8 @@ bool UHKBakeLibrary::BakeWorld()
 		FHKSpawn Spawn;
 		ReadSpawn(*Player, Spawn);
 		APlayerStart* Start = World->SpawnActor<APlayerStart>(
-			FVector(Spawn.X * 100.0, Spawn.Y * 100.0, Spawn.Z * 100.0 + 120.0),
-			FRotator(0.f, (float)Spawn.Yaw, 0.f), Params);
+			HKAxes::GameToUnreal(Spawn.X, Spawn.Y, Spawn.Z) + FVector(0.0, 0.0, 120.0),
+			FRotator(0.f, HKAxes::GameYawToUnreal(Spawn.Yaw), 0.f), Params);
 		if (Start)
 		{
 			Start->SetActorLabel(TEXT("PlayerStart_Central"));
@@ -955,7 +1018,7 @@ bool UHKBakeLibrary::BakeWorld()
 			break;
 		}
 		AStaticMeshActor* Actor = World->SpawnActor<AStaticMeshActor>(
-			FVector(Pad.X * 100.0, Pad.Y * 100.0, Pad.Z * 100.0 + 12.5), FRotator::ZeroRotator, Params);
+			HKAxes::GameToUnreal(Pad.X, Pad.Y, Pad.Z) + FVector(0.0, 0.0, 12.5), FRotator::ZeroRotator, Params);
 		if (!Actor)
 		{
 			continue;
@@ -972,8 +1035,8 @@ bool UHKBakeLibrary::BakeWorld()
 	for (const FHKSpawn& Car : Cars)
 	{
 		AHKCar* Actor = World->SpawnActor<AHKCar>(
-			FVector(Car.X * 100.0, Car.Y * 100.0, Car.Z * 100.0 + 100.0),
-			FRotator(0.f, (float)Car.Yaw, 0.f), Params);
+			HKAxes::GameToUnreal(Car.X, Car.Y, Car.Z) + FVector(0.0, 0.0, 100.0),
+			FRotator(0.f, HKAxes::GameYawToUnreal(Car.Yaw), 0.f), Params);
 		if (!Actor)
 		{
 			continue;
@@ -986,13 +1049,14 @@ bool UHKBakeLibrary::BakeWorld()
 		}
 		Actor->SetActorLabel(Car.Id);
 		Actor->Tags.Add(*Car.Id);
-		MarkSpatial(Actor, nullptr, true);
+		// Always loaded: World Partition would destroy a moved vehicle when its cell unloads.
+		MarkSpatial(Actor, nullptr, false);
 	}
 	for (const FHKSpawn& Heli : Helis)
 	{
 		AHKHelicopter* Actor = World->SpawnActor<AHKHelicopter>(
-			FVector(Heli.X * 100.0, Heli.Y * 100.0, Heli.Z * 100.0 + 120.0),
-			FRotator::ZeroRotator, Params);
+			HKAxes::GameToUnreal(Heli.X, Heli.Y, Heli.Z) + FVector(0.0, 0.0, 120.0),
+			FRotator(0.f, HKAxes::GameYawToUnreal(Heli.Yaw), 0.f), Params);
 		if (!Actor)
 		{
 			continue;
@@ -1000,13 +1064,14 @@ bool UHKBakeLibrary::BakeWorld()
 		Actor->ApplyPaint(HeliMat);
 		Actor->SetActorLabel(Heli.Id);
 		Actor->Tags.Add(*Heli.Id);
-		MarkSpatial(Actor, nullptr, true);
+		// Always loaded: World Partition would destroy a moved vehicle when its cell unloads.
+		MarkSpatial(Actor, nullptr, false);
 	}
 
-	const bool bSaved = UEditorLoadingAndSavingUtils::SaveMap(World, TEXT("/Game/Maps/HKWorld"));
+	const bool bSaved = UEditorLoadingAndSavingUtils::SaveMap(World, MapPackage);
 	if (!bSaved)
 	{
-		UE_LOG(LogHK, Error, TEXT("Saving /Game/Maps/HKWorld failed"));
+		UE_LOG(LogHK, Error, TEXT("Saving %s failed"), MapPackage);
 		return false;
 	}
 	const FString Ini = FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("DefaultEngine.ini"));

@@ -30,7 +30,6 @@ public class HKFreeRoamEditor : ModuleRules
 			"ChaosVehicles",
 			"PhysicsCore",
 			"RenderCore",
-			"WorldPartition",
 			"WorldPartitionEditor",
 			"EditorScriptingUtilities"
 		});

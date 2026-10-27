@@ -208,8 +208,10 @@ void AHKHelicopter::Fly(float DeltaSeconds)
 
 	const float Mass = FMath::Max(Body->GetMass(), 1.f);
 	const float Weight = Mass * 980.f;
+	// Assist off: full collective gives 1.5x weight (hover near 0.63), so the pilot can climb.
 	const float Base = bHoverAssist ? Weight : 0.15f * Weight;
-	float Thrust = (Base + Collective * Weight * 0.85f) * Spool;
+	const float Span = bHoverAssist ? 0.85f : 1.35f;
+	float Thrust = FMath::Max(Base + Collective * Weight * Span, 0.f) * Spool;
 	if (Collective > 0.05f)
 	{
 		FHitResult Ground;
@@ -228,7 +230,8 @@ void AHKHelicopter::Fly(float DeltaSeconds)
 	CyclicRoll = FMath::FInterpTo(CyclicRoll, RollTarget, DeltaSeconds, 2.0f);
 
 	// bAccelChange treats the vector as rad/s^2, so mass is not applied twice.
-	FVector Angular(CyclicRoll * 2.0f, CyclicPitch * 2.0f, YawInput * 1.2f);
+	// A positive torque about local +X lifts the right side, so roll is negated: +roll banks right.
+	FVector Angular(-CyclicRoll * 2.0f, CyclicPitch * 2.0f, YawInput * 1.2f);
 	Angular = GetActorTransform().TransformVectorNoScale(Angular);
 	if (bHoverAssist)
 	{

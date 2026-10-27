@@ -1,5 +1,6 @@
 #include "HKFreeRoamHUD.h"
 
+#include "HKAxes.h"
 #include "HKCar.h"
 #include "HKGameInstance.h"
 #include "HKHelicopter.h"
@@ -118,7 +119,8 @@ void AHKFreeRoamHUD::DrawMap(float X, float Y, float W, float H, bool bFull)
 	if (APawn* Pawn = GetOwningPawn())
 	{
 		float PX = 0, PY = 0;
-		ToScreen(Pawn->GetActorLocation().X / 100.0, Pawn->GetActorLocation().Y / 100.0, PX, PY);
+		const FVector2D Game2D = HKAxes::UnrealToGame(Pawn->GetActorLocation());
+		ToScreen(Game2D.X, Game2D.Y, PX, PY);
 		DrawRect(FLinearColor(1.f, 0.25f, 0.15f, 1.f), PX - 4.f, PY - 4.f, 8.f, 8.f);
 	}
 	DrawText(TEXT("N"), FLinearColor::White, X + 6.f, Y + 4.f, GEngine->GetSmallFont(), 1.f);
@@ -140,8 +142,9 @@ void AHKFreeRoamHUD::DrawReadout()
 	FString Coord = TEXT("經緯未載入");
 	if (Pawn && Game)
 	{
-		const double Xm = Pawn->GetActorLocation().X / 100.0;
-		const double Ym = Pawn->GetActorLocation().Y / 100.0;
+		const FVector2D Game2D = HKAxes::UnrealToGame(Pawn->GetActorLocation());
+		const double Xm = Game2D.X;
+		const double Ym = Game2D.Y;
 		if (const FHKPlace* Place = Game->FindNearestPlace(Xm, Ym))
 		{
 			PlaceName = Place->NameZh.IsEmpty() ? Place->Id : Place->NameZh;
