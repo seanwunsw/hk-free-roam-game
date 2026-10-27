@@ -357,7 +357,7 @@ UStaticMesh* BuildMesh(
 		Model.BuildSettings.bRecomputeTangents = true;
 		Model.BuildSettings.DistanceFieldResolutionScale = 0.25f;
 	}
-	// 5.6 has Build(const FBuildParameters&) and Build(bool, TArray<FText>*). One argument does not match either.
+	// 5.6 and 5.8 both have Build(const FBuildParameters&) and Build(bool, TArray<FText>*). One argument does not match either.
 	Mesh->Build(true, nullptr);
 
 	Mesh->CreateBodySetup();
@@ -698,7 +698,10 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	HeightData.Add(Guid, Heights);
 	TMap<FGuid, TArray<FLandscapeImportLayerInfo>> Layers;
 	Layers.Add(Guid, TArray<FLandscapeImportLayerInfo>());
-	Landscape->Import(Guid, 0, 0, VertsX - 1, VertsY - 1, Sections, QuadsPerSection, HeightData, TEXT(""), Layers, ELandscapeImportAlphamapType::Additive);
+	// UE 5.8 keeps only the overload whose last argument is TArrayView<const FLandscapeLayer> (the
+	// 5.6 TArray<FLandscapeLayer>* overload is gone), so pass the empty view explicitly.
+	Landscape->Import(Guid, 0, 0, VertsX - 1, VertsY - 1, Sections, QuadsPerSection, HeightData, TEXT(""), Layers, ELandscapeImportAlphamapType::Additive,
+		TArrayView<const FLandscapeLayer>());
 	Landscape->StaticLightingLOD = 2;
 	if (ULandscapeInfo* Info = Landscape->GetLandscapeInfo())
 	{
@@ -826,9 +829,16 @@ bool UHKBakeLibrary::BakeWorld()
 	{
 		return false;
 	}
-	if (!HKBakePlayer::Bake())
+	switch (HKBakePlayer::Bake())
 	{
+	case HKBakePlayer::EResult::Written:
+		break;
+	case HKBakePlayer::EResult::NoModel:
 		UE_LOG(LogHK, Warning, TEXT("Player avatar not baked; the world bake continues and the game uses the cube body"));
+		break;
+	case HKBakePlayer::EResult::Failed:
+		UE_LOG(LogHK, Error, TEXT("Player bake failed (see the errors above); fix it or remove the model from data/config/player.json"));
+		return false;
 	}
 	ConfigurePartition(World);
 	AWorldSettings* Settings = World->GetWorldSettings();
@@ -1098,5 +1108,5 @@ bool UHKBakeLibrary::BakePlayer()
 		UE_LOG(LogHK, Error, TEXT("BakePlayer needs the editor. Use UnrealEditor-Cmd -run=HKBakeWorld -PlayerOnly."));
 		return false;
 	}
-	return HKBakePlayer::Bake();
+	return HKBakePlayer::Bake() == HKBakePlayer::EResult::Written;
 }
