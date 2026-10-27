@@ -984,7 +984,8 @@ bool UHKBakeLibrary::BakeWorld()
 		}
 		Actor->SetActorLabel(Car.Id);
 		Actor->Tags.Add(*Car.Id);
-		MarkSpatial(Actor, nullptr, true);
+		// Always loaded: World Partition would destroy a moved vehicle when its cell unloads.
+		MarkSpatial(Actor, nullptr, false);
 	}
 	for (const FHKSpawn& Heli : Helis)
 	{
@@ -998,7 +999,8 @@ bool UHKBakeLibrary::BakeWorld()
 		Actor->ApplyPaint(HeliMat);
 		Actor->SetActorLabel(Heli.Id);
 		Actor->Tags.Add(*Heli.Id);
-		MarkSpatial(Actor, nullptr, true);
+		// Always loaded: World Partition would destroy a moved vehicle when its cell unloads.
+		MarkSpatial(Actor, nullptr, false);
 	}
 
 	const bool bSaved = UEditorLoadingAndSavingUtils::SaveMap(World, TEXT("/Game/Maps/HKWorld"));

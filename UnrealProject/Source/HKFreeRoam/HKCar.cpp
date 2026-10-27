@@ -213,6 +213,7 @@ void AHKCar::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 	bOccupied = true;
+	GetMesh()->SetEnableGravity(true);
 	if (UChaosWheeledVehicleMovementComponent* Move = Movement())
 	{
 		Move->SetHandbrakeInput(0.f);
@@ -277,8 +278,26 @@ void AHKCar::Tick(float DeltaSeconds)
 	if (!bOccupied)
 	{
 		Park();
+		HoldIfGroundUnloaded();
 	}
 	UpdateWheelVisuals(DeltaSeconds);
+}
+
+void AHKCar::HoldIfGroundUnloaded()
+{
+	// Cars are always loaded, but the streamed landscape and roads under a far car are not.
+	// Without ground a parked car would fall to KillZ and be destroyed, so hold it in place.
+	FHitResult Ground;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(HKCarGround), false, this);
+	const FVector Start = GetActorLocation();
+	const bool bGround = GetWorld()->LineTraceSingleByChannel(Ground, Start, Start - FVector(0.f, 0.f, 500.f), ECC_Visibility, Params);
+	UPrimitiveComponent* Body = GetMesh();
+	Body->SetEnableGravity(bGround);
+	if (!bGround)
+	{
+		Body->SetPhysicsLinearVelocity(FVector::ZeroVector);
+		Body->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
+	}
 }
 
 void AHKCar::UpdateWheelVisuals(float DeltaSeconds)

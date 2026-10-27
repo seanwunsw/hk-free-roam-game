@@ -39,6 +39,7 @@ private:
 	void ConfigureMechanical();
 	void SetupWheel(UStaticMeshComponent* Wheel, const FVector& Offset, UStaticMesh* WheelMesh);
 	void Park();
+	void HoldIfGroundUnloaded();
 	void PatchWheelBones();
 	void UpdateWheelVisuals(float DeltaSeconds);
 
