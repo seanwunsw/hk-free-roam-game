@@ -507,13 +507,14 @@ void AHKPlayerController::ExitVehicle()
 	Params.AddIgnoredActor(Character);
 	const FVector Start = Exit + FVector(0.f, 0.f, 300.f);
 	const FVector End = Exit - FVector(0.f, 0.f, 900.f);
+	const float Lift = Character->GetGroundLift();
 	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
 	{
-		Exit = Hit.Location + FVector(0.f, 0.f, 110.f);
+		Exit = Hit.Location + FVector(0.f, 0.f, Lift);
 	}
 	else
 	{
-		Exit.Z = Vehicle->GetActorLocation().Z + 110.f;
+		Exit.Z = Vehicle->GetActorLocation().Z + Lift;
 	}
 	Character->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	Character->SetActorLocation(Exit, false, nullptr, ETeleportType::TeleportPhysics);
@@ -625,7 +626,11 @@ void AHKPlayerController::TeleportToGameMetres(double XMetres, double YMetres, d
 		Z = Hit.Location.Z;
 	}
 	double Lift = 130.0;
-	if (Cast<AHKCar>(Pawn))
+	if (const AHKFreeRoamCharacter* OnFoot = Cast<AHKFreeRoamCharacter>(Pawn))
+	{
+		Lift = OnFoot->GetGroundLift();
+	}
+	else if (Cast<AHKCar>(Pawn))
 	{
 		Lift = 90.0;
 	}
