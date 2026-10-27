@@ -15,13 +15,10 @@ class HKFREEROAM_API AHKFreeRoamCharacter : public ACharacter
 
 public:
 	AHKFreeRoamCharacter();
-	virtual void Tick(float DeltaSeconds) override;
 
 	void SetSprinting(bool bInSprinting);
 
 private:
-	void UpdateSwim(float Z);
-
 	UPROPERTY(VisibleAnywhere, Category = "HK")
 	TObjectPtr<USpringArmComponent> CameraBoom;
 

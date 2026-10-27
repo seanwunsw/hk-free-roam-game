@@ -7,7 +7,9 @@
 #include "HKHelicopter.h"
 
 #include "Animation/Skeleton.h"
+#include "ActorFactories/ActorFactory.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Builders/CubeBuilder.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
@@ -24,6 +26,7 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "FileHelpers.h"
+#include "GameFramework/PhysicsVolume.h"
 #include "GameFramework/PlayerStart.h"
 #include "Landscape.h"
 #include "LandscapeInfo.h"
@@ -846,6 +849,21 @@ bool UHKBakeLibrary::BakeWorld()
 			Sea->SetActorLabel(TEXT("HKSea"));
 			MarkSpatial(Sea, nullptr, false);
 		}
+	}
+	// CharacterMovement only swims inside a physics volume with bWaterVolume. The box spans the
+	// map from the sea plane (Z = 0) down to KillZ. Land is above Z = 0, so it never reaches it.
+	if (APhysicsVolume* Water = World->SpawnActor<APhysicsVolume>(
+		FVector((MinX + MaxX) * 50.0, (MinY + MaxY) * 50.0, Settings->KillZ * 0.5), FRotator::ZeroRotator, Params))
+	{
+		UCubeBuilder* Builder = NewObject<UCubeBuilder>();
+		Builder->X = (MaxX - MinX) * 100.0;
+		Builder->Y = (MaxY - MinY) * 100.0;
+		Builder->Z = -Settings->KillZ;
+		UActorFactory::CreateBrushForVolumeActor(Water, Builder);
+		Water->bWaterVolume = true;
+		Water->FluidFriction = 0.6f;
+		Water->SetActorLabel(TEXT("HKSeaWater"));
+		MarkSpatial(Water, nullptr, false);
 	}
 
 	UPackage* HlodPackage = CreatePackage(TEXT("/Game/HK/HL_Buildings"));
