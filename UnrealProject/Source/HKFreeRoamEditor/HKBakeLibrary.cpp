@@ -1,5 +1,6 @@
 #include "HKBakeLibrary.h"
 
+#include "HKAxes.h"
 #include "HKCar.h"
 #include "HKFreeRoam.h"
 #include "HKFreeRoamGameMode.h"
@@ -309,8 +310,7 @@ void MarkSpatial(AActor* Actor, UHLODLayer* Layer, bool bSpatial)
 
 FVector3f ToUnreal(const FVector3f& GlTf, bool bNormal)
 {
-	const float Scale = bNormal ? 1.f : 100.f;
-	return FVector3f(GlTf.X * Scale, GlTf.Z * Scale, GlTf.Y * Scale);
+	return HKAxes::GltfToUnreal(GlTf, bNormal ? 1.f : 100.f);
 }
 
 void AddTriangle(FMeshDescription& Mesh, FPolygonGroupID Group, FVertexInstanceID A, FVertexInstanceID B, FVertexInstanceID C)
@@ -649,7 +649,7 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	const int32 QuadsPerSection = (int32)LandscapeObject->GetNumberField(TEXT("quads_per_section"));
 	const int32 Sections = (int32)LandscapeObject->GetNumberField(TEXT("sections_per_component"));
 	const double MinX = LandscapeObject->GetNumberField(TEXT("min_x_m"));
-	const double MinY = LandscapeObject->GetNumberField(TEXT("min_y_m"));
+	const double MaxY = LandscapeObject->GetNumberField(TEXT("max_y_m"));
 	const double SpacingX = LandscapeObject->GetNumberField(TEXT("spacing_x_m"));
 	const double SpacingY = LandscapeObject->GetNumberField(TEXT("spacing_y_m"));
 	const double ZScale = LandscapeObject->GetNumberField(TEXT("z_scale_cm"));
@@ -669,7 +669,12 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	}
 	TArray<uint16> Heights;
 	Heights.SetNumUninitialized(VertsX * VertsY);
-	FMemory::Memcpy(Heights.GetData(), Bytes.GetData(), Bytes.Num());
+	// terrain.r16 row 0 is the south edge. North is UE -Y, so landscape row 0 must be the
+	// north edge: reverse the rows and anchor the actor at the northern boundary.
+	for (int32 Row = 0; Row < VertsY; ++Row)
+	{
+		FMemory::Memcpy(&Heights[Row * VertsX], Bytes.GetData() + (VertsY - 1 - Row) * VertsX * 2, VertsX * 2);
+	}
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -684,7 +689,7 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	Landscape->LandscapeMaterial = Material;
 	Landscape->SetActorTransform(FTransform(
 		FRotator::ZeroRotator,
-		FVector(MinX * 100.0, MinY * 100.0, 0.0),
+		HKAxes::GameToUnreal(MinX, MaxY, 0.0),
 		FVector(SpacingX * 100.0, SpacingY * 100.0, ZScale)));
 
 	TMap<FGuid, TArray<uint16>> HeightData;
@@ -700,7 +705,7 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 	Landscape->SetActorLabel(TEXT("HKLandscape"));
 	MarkSpatial(Landscape, nullptr, false);
 	Landscape->PostEditChange();
-	UE_LOG(LogHK, Display, TEXT("Landscape %dx%d at (%.0f, %.0f) m"), VertsX, VertsY, MinX, MinY);
+	UE_LOG(LogHK, Display, TEXT("Landscape %dx%d, north-west corner at (%.0f, %.0f) m"), VertsX, VertsY, MinX, MaxY);
 	return true;
 }
 
@@ -873,7 +878,7 @@ bool UHKBakeLibrary::BakeWorld()
 	if (UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane")))
 	{
 		AStaticMeshActor* Sea = World->SpawnActor<AStaticMeshActor>(
-			FVector((MinX + MaxX) * 50.0, (MinY + MaxY) * 50.0, 0.0), FRotator::ZeroRotator, Params);
+			HKAxes::GameToUnreal((MinX + MaxX) * 0.5, (MinY + MaxY) * 0.5, 0.0), FRotator::ZeroRotator, Params);
 		if (Sea)
 		{
 			UStaticMeshComponent* Component = Sea->GetStaticMeshComponent();
@@ -890,7 +895,7 @@ bool UHKBakeLibrary::BakeWorld()
 	// CharacterMovement only swims inside a physics volume with bWaterVolume. The box spans the
 	// map from the sea plane (Z = 0) down to KillZ. Land is above Z = 0, so it never reaches it.
 	if (APhysicsVolume* Water = World->SpawnActor<APhysicsVolume>(
-		FVector((MinX + MaxX) * 50.0, (MinY + MaxY) * 50.0, Settings->KillZ * 0.5), FRotator::ZeroRotator, Params))
+		HKAxes::GameToUnreal((MinX + MaxX) * 0.5, (MinY + MaxY) * 0.5, 0.0) + FVector(0.0, 0.0, Settings->KillZ * 0.5), FRotator::ZeroRotator, Params))
 	{
 		UCubeBuilder* Builder = NewObject<UCubeBuilder>();
 		Builder->X = (MaxX - MinX) * 100.0;
@@ -925,7 +930,7 @@ bool UHKBakeLibrary::BakeWorld()
 			}
 			const int32 Ix = (int32)Tile->GetNumberField(TEXT("ix"));
 			const int32 Iy = (int32)Tile->GetNumberField(TEXT("iy"));
-			const FVector Origin(Tile->GetNumberField(TEXT("origin_x_m")) * 100.0, Tile->GetNumberField(TEXT("origin_y_m")) * 100.0, 0.0);
+			const FVector Origin = HKAxes::GameToUnreal(Tile->GetNumberField(TEXT("origin_x_m")), Tile->GetNumberField(TEXT("origin_y_m")), 0.0);
 			auto ImportOne = [&](const TCHAR* Field, UMaterial* Material, const FName& Slot, bool bNanite, EHKMeshCollision Collision, UHLODLayer* Layer)
 			{
 				FString Relative;
@@ -991,8 +996,8 @@ bool UHKBakeLibrary::BakeWorld()
 		FHKSpawn Spawn;
 		ReadSpawn(*Player, Spawn);
 		APlayerStart* Start = World->SpawnActor<APlayerStart>(
-			FVector(Spawn.X * 100.0, Spawn.Y * 100.0, Spawn.Z * 100.0 + 120.0),
-			FRotator(0.f, (float)Spawn.Yaw, 0.f), Params);
+			HKAxes::GameToUnreal(Spawn.X, Spawn.Y, Spawn.Z) + FVector(0.0, 0.0, 120.0),
+			FRotator(0.f, HKAxes::GameYawToUnreal(Spawn.Yaw), 0.f), Params);
 		if (Start)
 		{
 			Start->SetActorLabel(TEXT("PlayerStart_Central"));
@@ -1013,7 +1018,7 @@ bool UHKBakeLibrary::BakeWorld()
 			break;
 		}
 		AStaticMeshActor* Actor = World->SpawnActor<AStaticMeshActor>(
-			FVector(Pad.X * 100.0, Pad.Y * 100.0, Pad.Z * 100.0 + 12.5), FRotator::ZeroRotator, Params);
+			HKAxes::GameToUnreal(Pad.X, Pad.Y, Pad.Z) + FVector(0.0, 0.0, 12.5), FRotator::ZeroRotator, Params);
 		if (!Actor)
 		{
 			continue;
@@ -1030,8 +1035,8 @@ bool UHKBakeLibrary::BakeWorld()
 	for (const FHKSpawn& Car : Cars)
 	{
 		AHKCar* Actor = World->SpawnActor<AHKCar>(
-			FVector(Car.X * 100.0, Car.Y * 100.0, Car.Z * 100.0 + 100.0),
-			FRotator(0.f, (float)Car.Yaw, 0.f), Params);
+			HKAxes::GameToUnreal(Car.X, Car.Y, Car.Z) + FVector(0.0, 0.0, 100.0),
+			FRotator(0.f, HKAxes::GameYawToUnreal(Car.Yaw), 0.f), Params);
 		if (!Actor)
 		{
 			continue;
@@ -1050,8 +1055,8 @@ bool UHKBakeLibrary::BakeWorld()
 	for (const FHKSpawn& Heli : Helis)
 	{
 		AHKHelicopter* Actor = World->SpawnActor<AHKHelicopter>(
-			FVector(Heli.X * 100.0, Heli.Y * 100.0, Heli.Z * 100.0 + 120.0),
-			FRotator::ZeroRotator, Params);
+			HKAxes::GameToUnreal(Heli.X, Heli.Y, Heli.Z) + FVector(0.0, 0.0, 120.0),
+			FRotator(0.f, HKAxes::GameYawToUnreal(Heli.Yaw), 0.f), Params);
 		if (!Actor)
 		{
 			continue;

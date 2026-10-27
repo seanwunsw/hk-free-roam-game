@@ -46,7 +46,7 @@ F9 切換低／中畫質。中畫質開 Nanite、Lumen software、virtual shadow
 
 ```bat
 python tools/hkwarp/convert.py --lat 22.2849 --lon 114.1583
-python tools/hkwarp/convert.py --x-cm 0 --y-cm 0
+python tools/hkwarp/convert.py --x-cm 0 --y-cm 0    # Unreal 厘米，北係 -Y
 ```
 
 遊戲內 `HK.ToGame <lat> <lon>` 傳送，`HK.ToLatLon` 印出玩家經緯度。兩邊都讀 `data/processed/warp_lut.bin`。

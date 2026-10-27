@@ -1,4 +1,4 @@
-"""Convert between WGS84 and game centimetres.
+"""Convert between WGS84 and Unreal centimetres (the coordinates shown in the editor).
 
 Examples (from the repository root, after the pipeline has been run):
 
@@ -20,7 +20,7 @@ from tools.hkwarp.warp import default_lut_path, load_warp  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Hong Kong lat/lon <-> game centimetres")
+    parser = argparse.ArgumentParser(description="Hong Kong lat/lon <-> Unreal centimetres")
     parser.add_argument("--lat", type=float)
     parser.add_argument("--lon", type=float)
     parser.add_argument("--x-cm", type=float)
@@ -31,17 +31,17 @@ def main() -> int:
     lut = args.lut or default_lut_path()
     source = str(lut) if lut.exists() else "data/config/world.json (lut not built yet)"
     print(f"source: {source}")
-    print("axes: game +X east, +Y north, centimetres; Z is up and is not part of the warp")
+    print("axes: Unreal centimetres, +X east, +Y south (north is -Y); Z is up and is not part of the warp")
     if args.lat is not None or args.lon is not None:
         if args.lat is None or args.lon is None:
             parser.error("--lat and --lon are required together")
-        x_cm, y_cm = warp.lonlat_to_game_cm(args.lon, args.lat)
+        x_cm, y_cm = warp.lonlat_to_unreal_cm(args.lon, args.lat)
         print(f"lat {args.lat:.8f} lon {args.lon:.8f} -> x_cm {x_cm:.3f} y_cm {y_cm:.3f}")
         return 0
     if args.x_cm is not None or args.y_cm is not None:
         if args.x_cm is None or args.y_cm is None:
             parser.error("--x-cm and --y-cm are required together")
-        lon, lat = warp.game_cm_to_lonlat(args.x_cm, args.y_cm)
+        lon, lat = warp.unreal_cm_to_lonlat(args.x_cm, args.y_cm)
         print(f"x_cm {args.x_cm:.3f} y_cm {args.y_cm:.3f} -> lat {float(lat):.8f} lon {float(lon):.8f}")
         return 0
     parser.error("pass --lat/--lon or --x-cm/--y-cm")

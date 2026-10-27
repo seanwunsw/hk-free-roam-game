@@ -10,8 +10,9 @@ each fixed x, Y increases with y. The Jacobian is therefore G'(x) * dY/dy > 0
 and the warp cannot fold. A(x) * tanh widens Victoria Harbour without creating
 seams: A and yc are smooth.
 
-Game axes: +X east, +Y north, metres. Unreal centimetres are metres * 100
-(X east, Y north, Z up).
+Game axes: +X east, +Y north, metres. Unreal is left-handed, so north is -Y there:
+unreal_cm = (east * 100, -north * 100, up * 100). UnrealProject/Source/HKFreeRoam/HKAxes.h
+is the C++ side of the same mapping.
 
 After build(), every query uses the lookup tables written to warp_lut.bin.
 The game runtime evaluates those same tables (see shared/hk_warp.h).
@@ -99,6 +100,16 @@ def _integrate_scale(origin: float, step: float, samples: np.ndarray) -> np.ndar
     return values
 
 
+def game_m_to_unreal_cm(east_m, north_m):
+    """Game metres (+X east, +Y north) to Unreal centimetres (+X east, +Y south)."""
+    return np.asarray(east_m, dtype=np.float64) * 100.0, np.asarray(north_m, dtype=np.float64) * -100.0
+
+
+def unreal_cm_to_game_m(x_cm, y_cm):
+    """Inverse of game_m_to_unreal_cm."""
+    return np.asarray(x_cm, dtype=np.float64) / 100.0, np.asarray(y_cm, dtype=np.float64) / -100.0
+
+
 @dataclass
 class WarpModel:
     """Lookup-table warp. Queries match shared/hk_warp.h."""
@@ -179,9 +190,9 @@ class WarpModel:
         x, y = self.lonlat_to_real_m(lon, lat)
         return self.real_to_game_m(x, y)
 
-    def lonlat_to_game_cm(self, lon, lat):
+    def lonlat_to_unreal_cm(self, lon, lat):
         gx, gy = self.lonlat_to_game_m(lon, lat)
-        return gx * 100.0, gy * 100.0
+        return game_m_to_unreal_cm(gx, gy)
 
     def _invert_lut(self, origin: float, step: float, values: np.ndarray, target):
         target = np.asarray(target, dtype=np.float64)
@@ -231,8 +242,8 @@ class WarpModel:
         x, y = self.game_to_real_m(game_x, game_y)
         return self.real_m_to_lonlat(x, y)
 
-    def game_cm_to_lonlat(self, x_cm, y_cm):
-        return self.game_m_to_lonlat(np.asarray(x_cm, dtype=np.float64) / 100.0, np.asarray(y_cm, dtype=np.float64) / 100.0)
+    def unreal_cm_to_lonlat(self, x_cm, y_cm):
+        return self.game_m_to_lonlat(*unreal_cm_to_game_m(x_cm, y_cm))
 
     def geographic_extent_m(self, samples: int = 90) -> dict:
         bounds = self.config["bounds"]

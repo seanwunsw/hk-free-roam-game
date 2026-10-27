@@ -15,7 +15,7 @@
 - X 只經 G(x)
 - Y = H(y) + A(x) * tanh((y - yc(x)) / W) − 常數
 
-G、H 係正數 smoothstep 比例嘅積分，Jacobian 保持正數，所以唔會折疊或者打結。遊戲 +X 東、+Y 北，米；Unreal 係厘米，Z 向上。
+G、H 係正數 smoothstep 比例嘅積分，Jacobian 保持正數，所以唔會折疊或者打結。遊戲 +X 東、+Y 北，米。Unreal 係左手座標厘米：X 東、Y 南、Z 向上，即係 `ue = (東, −北, 上) × 100`。所有轉換都經 `HKAxes.h`（C++）同 `game_m_to_unreal_cm`（Python）；直接將北放落 +Y 會令成個城市東西鏡像。
 
 Python 係比例曲線嘅唯一來源，寫出 `warp_lut.bin`（magic `HKWARP01`）。`shared/hk_warp.h` 只查表，C++ 冇再抄一套 knot。
 
@@ -39,7 +39,7 @@ Python 係比例曲線嘅唯一來源，寫出 `warp_lut.bin`（magic `HKWARP01`
 - `r_*.glb` 道路條帶，UV.x 沿米數，UV.y 橫向 0–1，複雜碰撞、雙面
 - `w_*.glb` 內陸水面
 
-glTF 係 Y-up 米（X 東、Y 上、Z 北）。檔尾 HKGM chunk 寫住 BIN 入面每個 primitive 嘅 byte offset，烘焙器唔靠 Interchange 嚟猜軸。轉去 Unreal 厘米時 X 同 Z 對調，再按每個三角形嘅幾何法線決定要唔要交換索引。
+glTF 係 Y-up 米（X 東、Y 上、Z 北）。檔尾 HKGM chunk 寫住 BIN 入面每個 primitive 嘅 byte offset，烘焙器唔靠 Interchange 嚟猜軸。轉去 Unreal 厘米時用 `(x, −z, y) × 100`，再按每個三角形嘅幾何法線決定要唔要交換索引。`terrain.r16` 第 0 行係南邊；烘焙時倒轉行次序，Landscape 放喺北邊界 `Y = −max_y × 100`。
 
 Landscape：3025×2773 頂點，每 section 63 quad、每 component 1 section，即 48×44 components。`terrain.r16` 小端 uint16，第 0 行係南。中間值 32768 係海平面，Z scale 512 厘米，即每單位 4 厘米。Landscape 同海平面唔空間卸載；建築、路、車、直升機先至卸載。Loading range 目標 250000 厘米（2.5 公里）。HLOD layer 係 Instancing，但 proxy mesh 要另外跑 World Partition HLOD builder，呢份烘焙唔生成。
 
@@ -52,7 +52,7 @@ Landscape：3025×2773 頂點，每 section 63 quad、每 component 1 section，
 - 直升機：自訂力同一力矩。總距同懸停輔助決定沿機身向上嘅推力；週期變距同偏航係角加速度（`AddTorqueInRadians` 嘅 accel change），唔再乘質量。無人操時關重力，鎖喺停機坪上。停機坪：中環、啟德、尖沙咀、沙田、大嶼山。
 - HUD：Canvas，唔係 UMG。速度 km/h、高度米、經緯度、小地圖、大地圖、FPS、串流狀態。
 
-小地圖北向上：`u = (x - minx) / 寬`，`v = (maxy - y) / 高`。像素比例跟地圖，唔係正方形。
+小地圖北向上：`u = (x - minx) / 寬`，`v = (maxy - y) / 高`，x、y 係遊戲米（由 Unreal 位置經 `HKAxes::UnrealToGame` 轉返）。像素比例跟地圖，唔係正方形。
 
 ## 模組
 

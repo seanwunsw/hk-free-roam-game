@@ -1,5 +1,6 @@
 #include "HKPlayerController.h"
 
+#include "HKAxes.h"
 #include "HKCar.h"
 #include "HKFreeRoam.h"
 #include "HKFreeRoamCharacter.h"
@@ -613,8 +614,9 @@ void AHKPlayerController::TeleportToGameMetres(double XMetres, double YMetres, d
 	{
 		return;
 	}
-	const double Xcm = XMetres * 100.0;
-	const double Ycm = YMetres * 100.0;
+	const FVector Target = HKAxes::GameToUnreal(XMetres, YMetres, 0.0);
+	const double Xcm = Target.X;
+	const double Ycm = Target.Y;
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(HKTeleport), false, Pawn);
 	double Z = ZHintMetres * 100.0;
@@ -646,7 +648,7 @@ void AHKPlayerController::TeleportToGameMetres(double XMetres, double YMetres, d
 	}
 	if (bFaceYaw)
 	{
-		SetControlRotation(FRotator(-12.f, (float)YawDegrees, 0.f));
+		SetControlRotation(FRotator(-12.f, HKAxes::GameYawToUnreal(YawDegrees), 0.f));
 	}
 }
 
@@ -654,7 +656,8 @@ void AHKPlayerController::PrintLonLat(double XCm, double YCm) const
 {
 	UHKGameInstance* Game = GetGameInstance<UHKGameInstance>();
 	double Lon = 0, Lat = 0;
-	if (!Game || !Game->GameMetresToLonLat(XCm / 100.0, YCm / 100.0, Lon, Lat))
+	const FVector2D Game2D = HKAxes::UnrealToGame(FVector(XCm, YCm, 0.0));
+	if (!Game || !Game->GameMetresToLonLat(Game2D.X, Game2D.Y, Lon, Lat))
 	{
 		UE_LOG(LogHK, Warning, TEXT("Warp LUT is not loaded"));
 		return;
