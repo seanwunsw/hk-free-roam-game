@@ -50,6 +50,47 @@ UnrealEditor-Cmd.exe HKFreeRoam.uproject -run=WorldPartitionBuilderCommandlet -B
 
 C++ 係對住 UE 5.6 公開 API 寫嘅，冇喺 MSVC 編譯。文件上對到、但未編譯嘅包括：Chaos `bUseAutomaticGears`、`bAffectedByEngine`、`bAffectedByBrake`、`SpringRate`（單位 N/m）、`UEditorLoadingAndSavingUtils::NewBlankMap` / `SaveMap`（宣告喺 `FileHelpers.h`）、`UStaticMesh::Build(bool, TArray<FText>*)`。仍然要睇烘焙 log 先知係咪真係成功嘅包括：`FStaticToSkeletalMeshConverter` 喺安裝版引擎係咪連結到、Landscape `Import` 嘅 Guid 鍵、`UHLODLayer::SetLayerType`、World Partition `RuntimeHash` / `LoadingRange` 反射。對唔到嘅話先改嗰一行，唔好改 warp。
 
+## Review 修正（branch `fix/review-blockers-majors`）
+
+全部改動都 **未喺 MSVC 編譯、未烘焙、未 Play**。「已驗證」即係對過 UE 5.6 官方 API 文件，或者喺呢部機用數據／數值腳本計過；「推斷」即係要喺 Windows 上試先作實。
+
+| 項目 | 改動 | 檔案 | 狀態 |
+| --- | --- | --- | --- |
+| B1 | `Possess` 係 final，改 override `OnPossess`，call `Super::OnPossess` | `HKPlayerController.h/.cpp` | 已驗證（5.6 文件：`AController::OnPossess` 係 overridable） |
+| B2 | `InputYawScale`／`InputPitchScale` 喺 UE5 係 `_DEPRECATED`，改用 `SetDeprecatedInputYawScale(1)`／`SetDeprecatedInputPitchScale(1)` | `HKPlayerController.cpp` | API 已驗證；滑鼠上下方向要喺 PIE 睇（推斷冇變） |
+| B3 | 刪咗 `MATUSAGE_Landscape`（5.6 冇呢個 enum 值） | `HKBakeLibrary.cpp` | 已驗證 |
+| B4 | `Build.cs` 刪咗唔存在嘅 `"WorldPartition"` module | `HKFreeRoamEditor.Build.cs` | 已驗證（module index 冇；`UWorldPartition` 喺 Engine） |
+| M1 | Custom material 加 input 之前先 `Inputs.Reset()`，UV／VertColor／WorldPos 接返啱嘅 slot | `HKBakeLibrary.cpp` | 根因已驗證；material 編譯成功係推斷 |
+| M2 | 東西鏡像：遊戲北對應 Unreal −Y。全部經新 header `HKAxes.h`：glTF `(x, −z, y)`、Landscape 倒轉行次序並放喺 `Y = −max_y`、tile origin、海面、水 volume、spawn、yaw 取負、傳送、HUD、`HK.ToLatLon`。Python 加 `game_m_to_unreal_cm`，`convert.py` 改用 Unreal 厘米 | `HKAxes.h`、`HKBakeLibrary.cpp`、`HKPlayerController.cpp`、`HKFreeRoamHUD.cpp`、`HKDebugCommands.cpp`、`tools/hkwarp/*` | 數學已驗證（行列式 −1、Landscape 頂點同 tile 頂點落喺同一個 Unreal 位置、yaw 對準路、小地圖北向上）；畫面要喺 PIE 對返小地圖 |
+| M3 | 建築碰撞由每棟一個 AABB 改做每棟一個 `FKConvexElem`（用該棟頂點） | `HKBakeLibrary.cpp` | 已量度：中環 tile 46_31 道路被遮由 45% 降到 18.5%（真腳印本身 18.0%，係 OSM 路面同建築重疊），旺角 49_47 由 19% 降到 0.3%；cooking 成功係推斷 |
+| M4 | 車同直升機改做 always loaded（`SetIsSpatiallyLoaded(false)`）；無人嘅車腳下 5 米內冇地面就關重力、清速度 | `HKBakeLibrary.cpp`、`HKCar.h/.cpp` | 推斷（要 PIE 揸遠啲再返嚟睇車仲喺唔喺度） |
+| M5 | 懸停輔助關咗時總距範圍加大：最大 1.5 倍重量（大約 0.63 懸停）；推力 clamp 唔會變負 | `HKHelicopter.cpp` | 數值已驗證（舊 1.0 倍，即係永遠升唔到）；手感推斷 |
+| M6 | Roll 取負：UE 繞本地 +X 正力矩會令右邊升起 | `HKHelicopter.cpp` | 數值已驗證（四元數積分：向右推 → 右翼向下）；pitch／yaw 本身啱 |
+| M7 | 烘焙一個 `APhysicsVolume`（`bWaterVolume`），範圍成張地圖、由海平面到 KillZ；刪咗 `UpdateSwim` 強制游水 | `HKBakeLibrary.cpp`、`HKFreeRoamCharacter.h/.cpp` | API 已驗證（`UActorFactory::CreateBrushForVolumeActor`、`UCubeBuilder`）；游水推斷 |
+| M8 | 重新烘焙前 GC 舊 world、`ResetLoaders`，刪 `HKWorld.umap` 同 `__ExternalActors__`／`__ExternalObjects__/Maps/HKWorld`；刪唔到就 fail | `HKBakeLibrary.cpp` | API 已驗證（`IFileManager::Delete/DeleteDirectory`、`ResetLoaders`）；烘兩次 actor 數目一樣係推斷 |
+
+呢部機跑過：`pytest tools/tests` 9 項通過（多咗 2 項 Unreal 軸測試）、`pyflakes tools` 乾淨、`build_warp()` 重建嘅 `warp_lut.bin` 同 `golden_warp.csv` 同 commit 咗嗰份 byte 一樣。`warp_lut.bin`、`golden_warp.csv`、`spawns.json`、`landmarks.json`、`terrain.r16`、tile glb 冇改；`manifest.json` 只改咗兩句軸說明。冇 g++，`test_hk_warp.cpp` 未編譯。
+
+### 仍然未處理（Minor）
+
+1. 懸掛 `SpringRate` 45000 可能太硬
+2. 傳送只 trace 到 Landscape，未等建築／路串流
+3. 單一 Landscape actor（2112 components，冇 streaming proxy）
+4. `GConfig` 寫 `DefaultEngine.ini` 可能寫唔入（startup map）
+5. `-ExecutePythonScript` 烘焙路徑可能唔會退出
+6. Constructor 入面 `NewObject` 起 input action
+7. Look 冇 `Completed` binding
+8. `ReplaceObject` 永遠 return nullptr
+9. Packaged build 搵唔到 `data/processed`
+10. 非 ASCII 路徑讀唔到 LUT（`fopen_s`）
+11. HUD 中文字型 fallback 未確認
+12. 小地圖 aspect fallback 寫死
+13. `bCanHaveLayersContent` 之後版本會 deprecated
+14. `run_pipeline.py` 唔理參數（`--help` 會跑成條 pipeline）
+15. Tile 例外被吞，報告仍然 `ok: true`
+16. SRTM 令市區地面偏高
+17. 可分離 warp 令新市鎮比例偏細（README `convert.py` 例子已改做 Unreal 厘米）
+
 ## 數據同刻意限制
 
 - OSM：`https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf`（`asia/hong-kong-latest.osm.pbf` 會 404）。© OpenStreetMap contributors，ODbL。
