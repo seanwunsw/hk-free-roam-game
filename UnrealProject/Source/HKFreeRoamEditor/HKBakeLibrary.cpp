@@ -50,6 +50,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "StaticMeshAttributes.h"
 #include "StaticToSkeletalMeshConverter.h"
+#include "UObject/Linker.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UnrealType.h"
 #include "WorldPartition/HLOD/HLODLayer.h"
@@ -749,6 +750,38 @@ void SpawnAtmosphere(UWorld* World)
 		MarkSpatial(Fog, nullptr, false);
 	}
 }
+
+const TCHAR* MapPackage = TEXT("/Game/Maps/HKWorld");
+
+bool DeleteOldMap()
+{
+	// World Partition saves every actor as its own package with a new GUID name, so saving a
+	// fresh world over the old map left the previous bake's actors on disk and loaded both.
+	// Delete the old map and its external packages first. Runs after NewBlankMap so the old
+	// world is no longer the editor world.
+	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+	if (UPackage* Old = FindPackage(nullptr, MapPackage))
+	{
+		ResetLoaders(Old);
+	}
+	IFileManager& Files = IFileManager::Get();
+	const FString MapFile = FPackageName::LongPackageNameToFilename(MapPackage, FPackageName::GetMapPackageExtension());
+	if (Files.FileExists(*MapFile) && !Files.Delete(*MapFile, false, true, true))
+	{
+		UE_LOG(LogHK, Error, TEXT("Could not delete %s. Close it in the editor and bake again."), *MapFile);
+		return false;
+	}
+	for (const TCHAR* Root : {TEXT("__ExternalActors__"), TEXT("__ExternalObjects__")})
+	{
+		const FString Dir = FPaths::Combine(FPaths::ProjectContentDir(), Root, TEXT("Maps"), TEXT("HKWorld"));
+		if (Files.DirectoryExists(*Dir) && !Files.DeleteDirectory(*Dir, false, true))
+		{
+			UE_LOG(LogHK, Error, TEXT("Could not delete %s. Close the map in the editor and bake again."), *Dir);
+			return false;
+		}
+	}
+	return true;
+}
 }
 
 bool UHKBakeLibrary::BakeWorld()
@@ -780,6 +813,10 @@ bool UHKBakeLibrary::BakeWorld()
 	if (!World)
 	{
 		UE_LOG(LogHK, Error, TEXT("Could not create a blank map"));
+		return false;
+	}
+	if (!DeleteOldMap())
+	{
 		return false;
 	}
 	ConfigurePartition(World);
@@ -1026,10 +1063,10 @@ bool UHKBakeLibrary::BakeWorld()
 		MarkSpatial(Actor, nullptr, false);
 	}
 
-	const bool bSaved = UEditorLoadingAndSavingUtils::SaveMap(World, TEXT("/Game/Maps/HKWorld"));
+	const bool bSaved = UEditorLoadingAndSavingUtils::SaveMap(World, MapPackage);
 	if (!bSaved)
 	{
-		UE_LOG(LogHK, Error, TEXT("Saving /Game/Maps/HKWorld failed"));
+		UE_LOG(LogHK, Error, TEXT("Saving %s failed"), MapPackage);
 		return false;
 	}
 	const FString Ini = FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("DefaultEngine.ini"));
