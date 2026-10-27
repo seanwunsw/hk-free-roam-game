@@ -147,6 +147,8 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	Custom->OutputType = CMOT_Float3;
 	Custom->Description = AssetName;
 	Custom->Code = Code;
+	// The constructor adds one unnamed input. Clear it so Inputs[0..2] are UV, VertColor, WorldPos.
+	Custom->Inputs.Reset();
 	FCustomInput& UV = Custom->Inputs.AddDefaulted_GetRef();
 	UV.InputName = TEXT("UV");
 	FCustomInput& Color = Custom->Inputs.AddDefaulted_GetRef();
