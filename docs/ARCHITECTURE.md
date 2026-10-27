@@ -35,13 +35,13 @@ Python 係比例曲線嘅唯一來源，寫出 `warp_lut.bin`（magic `HKWARP01`
 
 每個 250 米 tile：
 
-- `b_*.glb` 建築物，一個 primitive 一棟，簡單 box 碰撞
+- `b_*.glb` 建築物，一個 primitive 一棟，每棟一個 convex hull 碰撞（AABB 會遮住馬路）
 - `r_*.glb` 道路條帶，UV.x 沿米數，UV.y 橫向 0–1，複雜碰撞、雙面
 - `w_*.glb` 內陸水面
 
 glTF 係 Y-up 米（X 東、Y 上、Z 北）。檔尾 HKGM chunk 寫住 BIN 入面每個 primitive 嘅 byte offset，烘焙器唔靠 Interchange 嚟猜軸。轉去 Unreal 厘米時用 `(x, −z, y) × 100`，再按每個三角形嘅幾何法線決定要唔要交換索引。`terrain.r16` 第 0 行係南邊；烘焙時倒轉行次序，Landscape 放喺北邊界 `Y = −max_y × 100`。
 
-Landscape：3025×2773 頂點，每 section 63 quad、每 component 1 section，即 48×44 components。`terrain.r16` 小端 uint16，第 0 行係南。中間值 32768 係海平面，Z scale 512 厘米，即每單位 4 厘米。Landscape 同海平面唔空間卸載；建築、路、車、直升機先至卸載。Loading range 目標 250000 厘米（2.5 公里）。HLOD layer 係 Instancing，但 proxy mesh 要另外跑 World Partition HLOD builder，呢份烘焙唔生成。
+Landscape：3025×2773 頂點，每 section 63 quad、每 component 1 section，即 48×44 components。`terrain.r16` 小端 uint16，第 0 行係南。中間值 32768 係海平面，Z scale 512 厘米，即每單位 4 厘米。Landscape、海平面、水 physics volume、車同直升機唔空間卸載（車同直升機係 always loaded，唔會因為 cell 卸載而被刪走）；建築、路同停機坪先至卸載。無人嘅車腳下冇地面（路未載入）時會關重力，唔會跌到 KillZ。重新烘焙會先刪舊 `HKWorld.umap` 同 `__ExternalActors__`／`__ExternalObjects__/Maps/HKWorld`。Loading range 目標 250000 厘米（2.5 公里）。HLOD layer 係 Instancing，但 proxy mesh 要另外跑 World Partition HLOD builder，呢份烘焙唔生成。
 
 ## 玩法物件
 
@@ -49,7 +49,7 @@ Landscape：3025×2773 頂點，每 section 63 quad、每 component 1 section，
 
 - 玩家：第三人稱膠囊加方塊，行 500、跑 900、跳大約 520（厘米／秒）。中環 PlayerStart。
 - 車：`AWheeledVehiclePawn`，一個 Root bone 嘅盒形 skeletal mesh，四個輪用 `AdditionalOffset`。視覺輪係圓柱，跟前進速度轉。質量 1450 kg，彈簧 45000 N/m，四驅，自動波。
-- 直升機：自訂力同一力矩。總距同懸停輔助決定沿機身向上嘅推力；週期變距同偏航係角加速度（`AddTorqueInRadians` 嘅 accel change），唔再乘質量。無人操時關重力，鎖喺停機坪上。停機坪：中環、啟德、尖沙咀、沙田、大嶼山。
+- 直升機：自訂力同一力矩。總距同懸停輔助決定沿機身向上嘅推力；週期變距同偏航係角加速度（`AddTorqueInRadians` 嘅 accel change），唔再乘質量。UE 入面繞本地 +X 嘅正力矩會令右邊升起，所以 roll 取負數，向右推就向右傾。懸停輔助關咗時總距 1.0 = 1.5 倍重量（大約 0.63 懸停），開咗時 = 1.85 倍。無人操時關重力，鎖喺停機坪上。停機坪：中環、啟德、尖沙咀、沙田、大嶼山。
 - HUD：Canvas，唔係 UMG。速度 km/h、高度米、經緯度、小地圖、大地圖、FPS、串流狀態。
 
 小地圖北向上：`u = (x - minx) / 寬`，`v = (maxy - y) / 高`，x、y 係遊戲米（由 Unreal 位置經 `HKAxes::UnrealToGame` 轉返）。像素比例跟地圖，唔係正方形。
