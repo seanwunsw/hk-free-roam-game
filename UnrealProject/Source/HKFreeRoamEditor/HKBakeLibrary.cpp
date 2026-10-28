@@ -23,7 +23,6 @@
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Engine/SkeletalMesh.h"
-#include "Engine/SkyAtmosphere.h"
 #include "Engine/SkyLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
@@ -148,7 +147,8 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	Material->BlendMode = bTranslucent ? BLEND_Translucent : BLEND_Opaque;
 	if (bNanite)
 	{
-		Material->bUsedWithNanite = true;
+		// bUsedWithNanite is UE_DEPRECATED(5.8). SetMaterialUsage(EMaterialUsage) is the virtual replacement.
+		Material->SetMaterialUsage(MATUSAGE_Nanite);
 	}
 
 	UMaterialExpressionCustom* Custom = NewObject<UMaterialExpressionCustom>(Material);
@@ -214,8 +214,7 @@ UMaterial* MakeCarMaterial()
 		Editor->BaseColor.Connect(0, Color);
 		Editor->Roughness.Connect(0, Rough);
 	}
-	bool bNeedsRecompile = false;
-	Material->SetMaterialUsage(bNeedsRecompile, MATUSAGE_SkeletalMesh);
+	Material->SetMaterialUsage(MATUSAGE_SkeletalMesh);
 	return FinishMaterial(Material);
 }
 
@@ -347,9 +346,9 @@ UStaticMesh* BuildMesh(
 	Params.bCommitMeshDescription = true;
 	Mesh->BuildFromMeshDescriptions(Descriptions, Params);
 
-	FMeshNaniteSettings Nanite = Mesh->NaniteSettings;
+	FMeshNaniteSettings Nanite = Mesh->GetNaniteSettings();
 	Nanite.bEnabled = bNanite;
-	Mesh->NaniteSettings = Nanite;
+	Mesh->SetNaniteSettings(Nanite);
 	if (Mesh->GetNumSourceModels() > 0)
 	{
 		FStaticMeshSourceModel& Model = Mesh->GetSourceModel(0);
@@ -686,7 +685,8 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 		return false;
 	}
 	const FGuid Guid = FGuid::NewGuid();
-	Landscape->bCanHaveLayersContent = false;
+	// UE 5.7 ALandscapeProxy no longer has bCanHaveLayersContent (member list and the
+	// deprecated list). CanHaveLayersContent() is only a getter; edit layers are always on.
 	Landscape->SetLandscapeGuid(Guid);
 	Landscape->LandscapeMaterial = Material;
 	Landscape->SetActorTransform(FTransform(

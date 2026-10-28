@@ -6,14 +6,14 @@
 
 | 里程碑 | 內容 | 狀態 |
 | --- | --- | --- |
-| M0 | 目錄、可編譯結構嘅 UE C++ 專案、`AGENTS.md` | 源碼寫好。未喺 Unreal 編譯 |
+| M0 | 目錄、可編譯結構嘅 UE C++ 專案、`AGENTS.md` | 源碼寫好。第一次 MSVC 編譯失敗（見「第一次 Windows 編譯」）。修正未再編譯 |
 | M1 | Python pipeline、warp、真實 OSM + SRTM、預覽 | 跑完，檢查通過 |
 | M2 | 烘焙 commandlet：Landscape、路、建築物、World Partition | 源碼寫好。未跑過 commandlet |
 | M3 | 第三人稱步行、上落載具 | 源碼寫好。未玩過 |
 | M4 | Chaos 車 | 源碼寫好。未玩過 |
 | M5 | 直升機 | 源碼寫好。未玩過 |
 | M6 | 小地圖、大地圖、傳送、畫質 | 源碼寫好。未玩過 |
-| M7 | 文件同編譯向嘅自我檢查 | 文件寫好。C++ 未經過 MSVC |
+| M7 | 文件同編譯向嘅自我檢查 | 文件寫好。第一次 MSVC 編譯失敗。修正未再編譯 |
 
 ## 呢部機實際跑過
 
@@ -30,9 +30,9 @@
 
 ## 未測試（必須當未完成）
 
-呢個環境冇 Epic 帳號，亦裝唔到 Unreal Editor，所以以下全部 **未編譯、未烘焙、未進入 Play**：
+呢個環境冇 Epic 帳號，亦裝唔到 Unreal Editor，所以以下全部 **未喺呢部機編譯、未烘焙、未進入 Play**。Sean 部 Windows 機跑過一次 `HKFreeRoamEditor` Win64 Development，失敗；修正未再編譯（見「第一次 Windows 編譯」）。
 
-- Visual Studio 工程生成同 `HKFreeRoamEditor` 編譯
+- Visual Studio 工程生成同 `HKFreeRoamEditor` 再編譯（第一次失敗咗）
 - `-run=HKBakeWorld` 同 Python `bake_world()`
 - Landscape Import、Nanite、World Partition loading range 反射、HLOD layer 係咪真係生效
 - 步行、跳躍、游水、上落車鏡頭
@@ -48,7 +48,7 @@ UnrealEditor-Cmd.exe HKFreeRoam.uproject -run=WorldPartitionBuilderCommandlet -B
 
 呢條命令亦未跑過。如果烘焙 log 話搵唔到 `LoadingRange`，要喺 World Partition 手動設 250000（厘米）。
 
-C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面「UE 5.8 升級」），冇喺 MSVC 編譯。文件上對到、但未編譯嘅包括：Chaos `bUseAutomaticGears`、`bAffectedByEngine`、`bAffectedByBrake`、`SpringRate`（單位 N/m）、`UEditorLoadingAndSavingUtils::NewBlankMap` / `SaveMap`（宣告喺 `FileHelpers.h`）、`UStaticMesh::Build(bool, TArray<FText>*)`。仍然要睇烘焙 log 先知係咪真係成功嘅包括：`FStaticToSkeletalMeshConverter` 喺安裝版引擎係咪連結到、Landscape `Import` 嘅 Guid 鍵、`UHLODLayer::SetLayerType`、World Partition `RuntimeHash` / `LoadingRange` 反射。對唔到嘅話先改嗰一行，唔好改 warp。
+C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面「UE 5.8 升級」）。第一次 MSVC 編譯失敗，修正未再編譯（見「第一次 Windows 編譯」）。文件上對到、但未編譯嘅包括：Chaos `bUseAutomaticGears`、`bAffectedByEngine`、`bAffectedByBrake`、`SpringRate`（單位 N/m）、`UEditorLoadingAndSavingUtils::NewBlankMap` / `SaveMap`（宣告喺 `FileHelpers.h`）、`UStaticMesh::Build(bool, TArray<FText>*)`。仍然要睇烘焙 log 先知係咪真係成功嘅包括：`FStaticToSkeletalMeshConverter` 喺安裝版引擎係咪連結到、Landscape `Import` 嘅 Guid 鍵、`UHLODLayer::SetLayerType`、World Partition `RuntimeHash` / `LoadingRange` 反射。對唔到嘅話先改嗰一行，唔好改 warp。
 
 ## Review 修正（branch `fix/review-blockers-majors`）
 
@@ -85,7 +85,7 @@ C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面�
 10. 非 ASCII 路徑讀唔到 LUT（`fopen_s`）
 11. HUD 中文字型 fallback 未確認
 12. 小地圖 aspect fallback 寫死
-13. `bCanHaveLayersContent` 之後版本會 deprecated
+13. `bCanHaveLayersContent`：5.7 API 已經冇呢個成員，烘焙唔再賦值（見「第一次 Windows 編譯」）
 14. `run_pipeline.py` 唔理參數（`--help` 會跑成條 pipeline）
 15. Tile 例外被吞，報告仍然 `ok: true`
 16. SRTM 令市區地面偏高
@@ -131,12 +131,12 @@ C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面�
 
 ## UE 5.8 升級（branch `feat/chibi-player`）
 
-目標 **UE 5.8.4**（`EngineAssociation` = `5.8`）。全部改動 **未喺 MSVC 編譯、未烘焙、未 Play**，呢部機冇 Unreal。「已驗證」= 對過 Epic 5.8 API 文件／release notes，或者喺呢部機實際下載、計過；「推斷」= 要喺 Windows 上 build 同烘焙先作實。
+目標 **UE 5.8.4**（`EngineAssociation` = `5.8`）。下面係升級時對文件嘅判斷。第一次真實 MSVC 編譯見最後一節：嗰次失敗，修正 **未再編譯**，未烘焙、未 Play。呢部機冇 Unreal。「已驗證」= 對過 Epic 5.8 API 文件／release notes，或者喺呢部機實際下載、計過；「推斷」= 要喺 Windows 上 build 同烘焙先作實。
 
 | 項目 | 改動 | 狀態 |
 | --- | --- | --- |
 | 引擎版本 | `.uproject` `EngineAssociation` 5.6 → 5.8；plugin 清單冇改 | 改咗。Plugin 喺 5.8 仲存在：IKRig／IKRigEditor（API 文件路徑 `Plugins/Animation/IKRig`）、ChaosVehiclesPlugin（`Plugins/Experimental/ChaosVehiclesPlugin`）已驗證；EnhancedInput、PythonScriptPlugin、EditorScriptingUtilities、Interchange、InterchangeEditor 推斷（release notes 冇講刪） |
-| 工具鏈 | README／AGENTS 寫明 VS 2022 17.14+ 或 VS 2026、MSVC 14.38+、Windows SDK 10.0.22621.0+ | 已驗證（5.8 release notes「Platform SDK Upgrades」）。Sean 部機嘅 VS 版本未知 |
+| 工具鏈 | README／AGENTS 寫明 VS 2022 17.14+ 或 VS 2026、MSVC 14.38+、Windows SDK 10.0.22621.0+ | 已驗證（5.8 release notes「Platform SDK Upgrades」）。Sean 部機：VS 2022 17.14.43、MSVC 14.44.35207、Windows SDK 10.0.22621/26100、UE 5.8.4 CL 58902052 |
 | Target.cs | 保持 `BuildSettingsVersion.Latest`、`EngineIncludeOrderVersion.Latest` | 5.7 notes 要求安裝版引擎用 V6；`Latest` 已經 ≥ V6，5.8 notes 冇新版本 → 推斷唔使改 |
 | Build.cs module 名 | 冇改 | `IKRig`、`IKRigEditor`、`ChaosVehicles`、`Landscape`、`UnrealEd`、`SkeletalMeshUtilitiesCommon`、`Engine`、`CoreUObject` 已驗證（5.8 API 文件嘅 module 路徑）；其餘推斷 |
 | VRM4U | 5.8 zip，68,577,272 bytes，SHA-256 `4ab9d363c006a00c6bf10712b6b5fb79e4aad3ee859927f4ae0216e96f677f3f` | 已驗證（下載、hash = GitHub digest、解壓、uplugin `5.8.0`）。`ImportVRMFileWithOptions`、`FImportOptionData::bGenerateRigIK`、`UVrmAssetListObject` 喺 5.8 源碼仲喺度：已驗證。VRM4U 喺 5.8 編唔編到：推斷 |
@@ -146,8 +146,34 @@ C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面�
 | Substrate | `DefaultEngine.ini` 加 `r.Substrate=False` | 5.8 Substrate 文件話「升級上嚟嘅舊專案預設繼續行非 Substrate，除非 project settings 明確開」：已驗證。`r.Substrate` 呢個 cvar 名：社區同 Epic 論壇一致，未喺 5.8 官方文件見到原文 → 推斷 |
 | 點解唔開 Substrate | Figure 物料（Subsurface + rim emissive）、描邊（Unlit）、`MakeCustomMaterial` 起嘅 facade／road／water／terrain／pad，全部 C++ 直接接舊 pin。開 Substrate 會自動轉換，外觀會變；Substrate 轉換係單程；Toon 喺 Substrate 仲係 Experimental | 理由。開唔開 Substrate 嘅視覺比較要另開 branch 試 |
 | Landscape | `ALandscapeProxy::Import` 喺 5.8 淨返 `TArrayView<const FLandscapeLayer>` 個 overload（5.6 嗰個 `TArray*` 冇咗），而家明確傳空 view | 已驗證（5.6／5.8 API 文件對比）；編譯推斷 |
-| 其他 C++ API | `SetDeprecatedInputYawScale/PitchScale`、`FVehicleTransmissionConfig`（`bUseAutomaticGears` 等）、`UChaosVehicleWheel` 全部 setter 欄位、`FSavePackageArgs`、`UStaticMesh::Build(bool, TArray<FText>*)`、`FStaticToSkeletalMeshConverter`、`UEditorLoadingAndSavingUtils::NewBlankMap/SaveMap/SaveDirtyPackages`、`UHLODLayer::SetLayerType`、`ALandscape::bCanHaveLayersContent` | 已驗證仲喺 5.8 API 文件。World Partition `RuntimeHash`／`LoadingRange` 反射：推斷（反射，搵唔到會 warning） |
+| 其他 C++ API | `SetDeprecatedInputYawScale/PitchScale`、`FVehicleTransmissionConfig`（`bUseAutomaticGears` 等）、`UChaosVehicleWheel` 全部 setter 欄位、`FSavePackageArgs`、`UStaticMesh::Build(bool, TArray<FText>*)`、`FStaticToSkeletalMeshConverter`、`UEditorLoadingAndSavingUtils::NewBlankMap/SaveMap/SaveDirtyPackages`、`UHLODLayer::SetLayerType` | 已驗證仲喺 5.7／5.8 API 文件。`bCanHaveLayersContent` 嗰句作廢：5.7 `ALandscapeProxy` 成員表同 deprecated 表都冇呢個欄位（見最後一節）。World Partition `RuntimeHash`／`LoadingRange` 反射：推斷（反射，搵唔到會 warning） |
 | 已知 5.8 bug | UE-364613（World Partition server streaming + Iris，5.8 受影響，target fix 6.0） | 單機版唔受影響；將來做多人先要理（見多人研究） |
 | Python | `pytest tools/tests`（加 `test_engine.py`：VRM4U asset 跟 `EngineAssociation`、兩個 script 一致、`r.Substrate=False`）、`pyflakes tools` | 呢部機跑過：21 項通過，pyflakes 乾淨 |
 
 Windows 上要做嘅：刪 `Binaries`／`Intermediate`／`DerivedDataCache`／`Saved`／`Plugins/VRM4U`，跑 `get_vrm4u.ps1`，generate project files，build `HKFreeRoamEditor`，`-PlayerOnly` 烘角色睇 log 入面 `chain X <- Y` 同 `retargeted N of M clips`，再烘世界、Play。
+
+## 第一次 Windows 編譯（UE 5.8.4）
+
+Sean 部機第一次 build `HKFreeRoamEditor` Win64 Development（`Build.bat ... -FromMsBuild`）失敗，exit 6，`OtherCompilationError`。引擎 UE 5.8.4 launcher CL 58902052，VS 2022 17.14.43，MSVC 14.44.35207，Windows SDK 10.0.22621/26100。下面嘅修正 **未再編譯**（Sean 聽日再 build）。未烘焙、未 Play。呢部機冇 Unreal，對過嘅係 Epic API 頁同已經成功編譯過嘅翻譯單元，唔係再跑一次 MSVC。
+
+| 檔案 | Build log | 修正 | 證據 |
+| --- | --- | --- | --- |
+| `HKCar.cpp` / `HKCar.h` | C4458：`SetVehicleMesh` 嘅 `Mesh` 遮住 class member | 參數改名 `NewMesh` | 車係 `AWheeledVehiclePawn`，mesh 組件成員叫 `Mesh`。只改名 |
+| `HKPlayerController.cpp` | C4458：`Character`（237、280、288、296、304、455、499、650）、`Pawn`（470、613）遮住 class member | 區域變數改名 `Walker`、`ControlledPawn` | `AController::Character` 喺 `GameFramework/Controller.h`（UE 5.5 起已經有，UE 當 C4458 做 error）。`AController::Pawn` 係原有成員 |
+| `HKPlayerController.cpp` | C2664：`AController::Possess(APawn*)` 收唔到 `AActor*` | `FindRide()` 結果 `Cast<APawn>` 先 `Possess` | `Possess` 簽名係 `APawn*`。車同直升機都係 pawn；唔係 pawn 就唔上 |
+| `HKBakeLibrary.cpp` | C1083：搵唔到 `Engine/SkyAtmosphere.h` | 刪咗呢行 include。`ASkyAtmosphere` 用已經 include 咗嘅 `Components/SkyAtmosphereComponent.h` | [UE 5.8 `ASkyAtmosphere`](https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/ASkyAtmosphere)：header 係 `Components/SkyAtmosphereComponent.h`。`ASkyLight` 仍然係 `Engine/SkyLight.h`（5.8 文件），冇郁 |
+| `HKBakePlayer.cpp` | C2665：`TMap::Add` 兩個 overload 都唔夾（122、134） | `FString(*Pair.Key)` 再 `Add` | [UE 5.8 `FJsonObject`](https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Json/FJsonObject) 繼承 `FJsonObjectSharedStringStorage`。`Values` 鍵係 `FStringType`（`UE::FSharedString`），唔再係 `FString`，所以 `TMap<FString,…>::Add` 唔接受 `Pair.Key`。`*Key` 係字元指針，`FString` 可以由佢起。同一寫法喺別嘅 5.8 plugin 全量 build 過 |
+| `HKBakePlayer.cpp` 754–755，同 `HKBakeLibrary.cpp` 未編譯到嘅同一呼叫 | C4996：`UMaterial::SetMaterialUsage` deprecated in 5.8，「Use the new (virtual) implementation」 | 改呼叫 `SetMaterialUsage(EMaterialUsage)`，唔再傳 `bool&` | [UE 5.8 `UMaterialInterface`](https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/UMaterialInterface)：`virtual bool SetMaterialUsage(EMaterialUsage Usage)`。`bUsedWithNanite` 係同一批 `UE_DEPRECATED(5.8)`，改做 `SetMaterialUsage(MATUSAGE_Nanite)`。`HKBakeLibrary.cpp` 死喺 include，呢幾行上次 build 未跑到 |
+| `HKBakeLibrary.cpp` `NaniteSettings` 直接讀寫 | 上次 build 未跑到（fatal include）。5.7 起直接讀寫欄位係 deprecated | 改 `GetNaniteSettings` / `SetNaniteSettings` | UE 5.7 `UStaticMesh` 文件已經有呢兩個函數（`Engine/StaticMesh.h`）。欄位本身 5.7 頁仲列住，所以舊寫法可能只係 C4996，唔係 error |
+| `HKBakeLibrary.cpp` `bCanHaveLayersContent = false` | 上次 build 未跑到 | 刪咗賦值 | UE 5.7 `ALandscapeProxy` 公開成員表同 deprecated 表都冇 `bCanHaveLayersContent`，只剩 `CanHaveLayersContent()` getter 同 `bHasLayersContent_DEPRECATED`。5.8 嗰頁 403，讀唔到。5.8 唔會加返一個 5.7 已經刪咗嘅欄位。高度／layer map 仍然用同一個非空 `FGuid`（`AGENTS.md`） |
+| `HKFreeRoam.h` `LogHK` | build log 未出現（編譯未去到 link） | `HKFREEROAM_API` export | Editor module 係另一個 DLL，`UE_LOG(LogHK)` 要用到 game module 嘅符號。冇 export 嘅話 link 會 LNK2019。呢個係預測，上次 log 冇呢個 error |
+
+掃過其餘 C++：game module 其他翻譯單元上次冇 C4458（`HKFreeRoamHUD`／`HKDebugCommands` 嘅 `Pawn`、`HKPlayerAnimInstance` 嘅 `Character` 唔係 `AController` 嘅成員函數，而且嗰啲 TU 已經編譯完）。`HKBakePlayer.cpp` 入面其他 `TMap::Add` 用嘅係 `TMap<FString,…>`，編譯過。`REN_ForceNoResetLoaders` 喺 `HKBakePlayer.cpp` 163 行，編譯過，冇刪。IKRig header 已經 include 到，冇加 Slate。`TryGetStringField` 喺 game module 編譯過，冇改。
+
+WIP 冇跟嘅 hunk：`HeightData`／`Layers` 改鍵做 `FGuid()`。呢個唔係編譯錯誤，而且同「兩個 map 用同一個非空 Guid」衝突。5.8 `Landscape.cpp` 嘅 `Import` 本體呢度讀唔到，所以唔知 runtime 係咪 `FindChecked(FGuid())`。如果烘焙 assert 話搵唔到高度，先至要改鍵，唔好而家估。
+
+唔肯定聽日會唔會過嘅：
+- `bCanHaveLayersContent` 如果 5.8 竟然仲喺度，而家唔再強制 false（編譯仍然會過）。
+- `LogHK` export 係預測嘅 link 修正，log 未證明。
+- `GetNaniteSettings`／`SetNaniteSettings` 5.7 文件有，5.8 頁 404，推斷仲喺。
+- `HKBakeLibrary.cpp` 喺 include 之後嘅 API（`FStaticToSkeletalMeshConverter`、World Partition 反射、`Import` 嘅空 `TArrayView`）上次完全未編譯到。文件話 `Import` 要 `TArrayView<const FLandscapeLayer>`，現有呼叫已經係咁，但係未喺呢次 MSVC 證實。

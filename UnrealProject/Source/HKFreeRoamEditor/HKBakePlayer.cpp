@@ -119,7 +119,8 @@ bool ReadConfig(FHKPlayerConfig& Out)
 			FString Value;
 			if (Pair.Value.IsValid() && Pair.Value->TryGetString(Value))
 			{
-				Out.Clips.Add(Pair.Key, Value);
+				// Values keys are FJsonObject::FStringType (UE::FSharedString) in 5.8, not FString.
+				Out.Clips.Add(FString(*Pair.Key), Value);
 			}
 		}
 	}
@@ -131,7 +132,7 @@ bool ReadConfig(FHKPlayerConfig& Out)
 			double Value = 0.0;
 			if (Pair.Value.IsValid() && Pair.Value->TryGetNumber(Value))
 			{
-				Out.RefSpeeds.Add(Pair.Key, static_cast<float>(Value));
+				Out.RefSpeeds.Add(FString(*Pair.Key), static_cast<float>(Value));
 			}
 		}
 	}
@@ -750,9 +751,8 @@ UMaterialExpressionTextureSampleParameter2D* BaseTexture(UMaterial* Material)
 
 UMaterial* FinishMaterial(UMaterial* Material)
 {
-	bool bNeedsRecompile = false;
-	Material->SetMaterialUsage(bNeedsRecompile, MATUSAGE_SkeletalMesh);
-	Material->SetMaterialUsage(bNeedsRecompile, MATUSAGE_MorphTargets);
+	Material->SetMaterialUsage(MATUSAGE_SkeletalMesh);
+	Material->SetMaterialUsage(MATUSAGE_MorphTargets);
 	Material->bAutomaticallySetUsageInEditor = true;
 	Material->PreEditChange(nullptr);
 	Material->PostEditChange();

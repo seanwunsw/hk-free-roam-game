@@ -31,7 +31,7 @@ public:
 
 	void ApplyDrive(float ForwardAxis, float SteerAxis, bool bHandbrake);
 	void StopPhysics();
-	void SetVehicleMesh(USkeletalMesh* Mesh, UPhysicsAsset* PhysicsAsset);
+	void SetVehicleMesh(USkeletalMesh* NewMesh, UPhysicsAsset* PhysicsAsset);
 	void ApplyPaint(UMaterialInterface* BodyMaterial, UMaterialInterface* WheelMaterial);
 
 private:

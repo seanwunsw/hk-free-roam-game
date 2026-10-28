@@ -234,11 +234,11 @@ void AHKPlayerController::PlayerTick(float DeltaTime)
 void AHKPlayerController::OnMove(const FInputActionValue& Value)
 {
 	const FVector2D Axis = Value.Get<FVector2D>();
-	if (AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(GetPawn()))
+	if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
 	{
 		const FRotator Yaw(0.f, GetControlRotation().Yaw, 0.f);
-		Character->AddMovementInput(FRotationMatrix(Yaw).GetUnitAxis(EAxis::X), Axis.Y);
-		Character->AddMovementInput(FRotationMatrix(Yaw).GetUnitAxis(EAxis::Y), Axis.X);
+		Walker->AddMovementInput(FRotationMatrix(Yaw).GetUnitAxis(EAxis::X), Axis.Y);
+		Walker->AddMovementInput(FRotationMatrix(Yaw).GetUnitAxis(EAxis::Y), Axis.X);
 		return;
 	}
 	DriveAxis = Axis;
@@ -277,33 +277,33 @@ void AHKPlayerController::OnLook(const FInputActionValue& Value)
 
 void AHKPlayerController::OnJumpStarted()
 {
-	if (AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(GetPawn()))
+	if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
 	{
-		Character->Jump();
+		Walker->Jump();
 	}
 }
 
 void AHKPlayerController::OnJumpCompleted()
 {
-	if (AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(GetPawn()))
+	if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
 	{
-		Character->StopJumping();
+		Walker->StopJumping();
 	}
 }
 
 void AHKPlayerController::OnSprintStarted()
 {
-	if (AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(GetPawn()))
+	if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
 	{
-		Character->SetSprinting(true);
+		Walker->SetSprinting(true);
 	}
 }
 
 void AHKPlayerController::OnSprintCompleted()
 {
-	if (AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(GetPawn()))
+	if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
 	{
-		Character->SetSprinting(false);
+		Walker->SetSprinting(false);
 	}
 }
 
@@ -450,16 +450,16 @@ void AHKPlayerController::OnInteract()
 		ExitVehicle();
 		return;
 	}
-	if (AActor* Ride = FindRide())
+	if (APawn* Ride = Cast<APawn>(FindRide()))
 	{
-		if (AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(GetPawn()))
+		if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
 		{
-			OnFootPawn = Character;
-			Character->GetCharacterMovement()->StopMovementImmediately();
-			Character->GetCharacterMovement()->Deactivate();
-			Character->SetActorHiddenInGame(true);
-			Character->SetActorEnableCollision(false);
-			Character->AttachToActor(Ride, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+			OnFootPawn = Walker;
+			Walker->GetCharacterMovement()->StopMovementImmediately();
+			Walker->GetCharacterMovement()->Deactivate();
+			Walker->SetActorHiddenInGame(true);
+			Walker->SetActorEnableCollision(false);
+			Walker->AttachToActor(Ride, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 			Possess(Ride);
 		}
 	}
@@ -467,8 +467,8 @@ void AHKPlayerController::OnInteract()
 
 AActor* AHKPlayerController::FindRide() const
 {
-	APawn* Pawn = GetPawn();
-	if (!Pawn)
+	APawn* ControlledPawn = GetPawn();
+	if (!ControlledPawn)
 	{
 		return nullptr;
 	}
@@ -483,7 +483,7 @@ AActor* AHKPlayerController::FindRide() const
 		{
 			continue;
 		}
-		const float Dist = FVector::Dist(Pawn->GetActorLocation(), Actor->GetActorLocation());
+		const float Dist = FVector::Dist(ControlledPawn->GetActorLocation(), Actor->GetActorLocation());
 		if (Dist <= Ride->GetInteractRadiusCm() && Dist < BestDist)
 		{
 			BestDist = Dist;
@@ -496,18 +496,18 @@ AActor* AHKPlayerController::FindRide() const
 void AHKPlayerController::ExitVehicle()
 {
 	APawn* Vehicle = GetPawn();
-	AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(OnFootPawn);
-	if (!Vehicle || !Character)
+	AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(OnFootPawn);
+	if (!Vehicle || !Walker)
 	{
 		return;
 	}
 	FVector Exit = Vehicle->GetActorLocation() + Vehicle->GetActorRightVector() * 220.f;
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(HKExit), false, Vehicle);
-	Params.AddIgnoredActor(Character);
+	Params.AddIgnoredActor(Walker);
 	const FVector Start = Exit + FVector(0.f, 0.f, 300.f);
 	const FVector End = Exit - FVector(0.f, 0.f, 900.f);
-	const float Lift = Character->GetGroundLift();
+	const float Lift = Walker->GetGroundLift();
 	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
 	{
 		Exit = Hit.Location + FVector(0.f, 0.f, Lift);
@@ -516,14 +516,14 @@ void AHKPlayerController::ExitVehicle()
 	{
 		Exit.Z = Vehicle->GetActorLocation().Z + Lift;
 	}
-	Character->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	Character->SetActorLocation(Exit, false, nullptr, ETeleportType::TeleportPhysics);
-	Character->SetActorHiddenInGame(false);
-	Character->SetActorEnableCollision(true);
-	Character->GetCharacterMovement()->Activate();
-	Character->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
-	Character->GetCharacterMovement()->StopMovementImmediately();
-	Possess(Character);
+	Walker->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	Walker->SetActorLocation(Exit, false, nullptr, ETeleportType::TeleportPhysics);
+	Walker->SetActorHiddenInGame(false);
+	Walker->SetActorEnableCollision(true);
+	Walker->GetCharacterMovement()->Activate();
+	Walker->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	Walker->GetCharacterMovement()->StopMovementImmediately();
+	Possess(Walker);
 }
 
 void AHKPlayerController::TryHotkeys()
@@ -610,8 +610,8 @@ void AHKPlayerController::TeleportToLonLat(double Lat, double Lon)
 
 void AHKPlayerController::TeleportToGameMetres(double XMetres, double YMetres, double ZHintMetres, bool bFaceYaw, double YawDegrees)
 {
-	APawn* Pawn = GetPawn();
-	if (!Pawn || !GetWorld())
+	APawn* ControlledPawn = GetPawn();
+	if (!ControlledPawn || !GetWorld())
 	{
 		return;
 	}
@@ -619,37 +619,37 @@ void AHKPlayerController::TeleportToGameMetres(double XMetres, double YMetres, d
 	const double Xcm = Target.X;
 	const double Ycm = Target.Y;
 	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(HKTeleport), false, Pawn);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(HKTeleport), false, ControlledPawn);
 	double Z = ZHintMetres * 100.0;
 	if (GetWorld()->LineTraceSingleByChannel(Hit, FVector(Xcm, Ycm, 1500000.0), FVector(Xcm, Ycm, -200000.0), ECC_Visibility, Params))
 	{
 		Z = Hit.Location.Z;
 	}
 	double Lift = 130.0;
-	if (const AHKFreeRoamCharacter* OnFoot = Cast<AHKFreeRoamCharacter>(Pawn))
+	if (const AHKFreeRoamCharacter* OnFoot = Cast<AHKFreeRoamCharacter>(ControlledPawn))
 	{
 		Lift = OnFoot->GetGroundLift();
 	}
-	else if (Cast<AHKCar>(Pawn))
+	else if (Cast<AHKCar>(ControlledPawn))
 	{
 		Lift = 90.0;
 	}
-	else if (Cast<AHKHelicopter>(Pawn))
+	else if (Cast<AHKHelicopter>(ControlledPawn))
 	{
 		Lift = 200.0;
 	}
-	Pawn->SetActorLocation(FVector(Xcm, Ycm, Z + Lift), false, nullptr, ETeleportType::TeleportPhysics);
-	if (AHKCar* Car = Cast<AHKCar>(Pawn))
+	ControlledPawn->SetActorLocation(FVector(Xcm, Ycm, Z + Lift), false, nullptr, ETeleportType::TeleportPhysics);
+	if (AHKCar* Car = Cast<AHKCar>(ControlledPawn))
 	{
 		Car->StopPhysics();
 	}
-	else if (AHKHelicopter* Heli = Cast<AHKHelicopter>(Pawn))
+	else if (AHKHelicopter* Heli = Cast<AHKHelicopter>(ControlledPawn))
 	{
 		Heli->StopPhysics();
 	}
-	else if (AHKFreeRoamCharacter* Character = Cast<AHKFreeRoamCharacter>(Pawn))
+	else if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(ControlledPawn))
 	{
-		Character->GetCharacterMovement()->StopMovementImmediately();
+		Walker->GetCharacterMovement()->StopMovementImmediately();
 	}
 	if (bFaceYaw)
 	{
