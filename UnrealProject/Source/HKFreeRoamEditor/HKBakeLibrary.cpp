@@ -694,10 +694,12 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 		HKAxes::GameToUnreal(MinX, MaxY, 0.0),
 		FVector(SpacingX * 100.0, SpacingY * 100.0, ZScale)));
 
+	// Import() looks the data up under the final edit layer's key, which is an empty FGuid
+	// (LandscapeEdit.cpp: FindChecked(FGuid())), not the landscape's own guid.
 	TMap<FGuid, TArray<uint16>> HeightData;
-	HeightData.Add(Guid, Heights);
+	HeightData.Add(FGuid(), Heights);
 	TMap<FGuid, TArray<FLandscapeImportLayerInfo>> Layers;
-	Layers.Add(Guid, TArray<FLandscapeImportLayerInfo>());
+	Layers.Add(FGuid(), TArray<FLandscapeImportLayerInfo>());
 	// UE 5.8 keeps only the overload whose last argument is TArrayView<const FLandscapeLayer> (the
 	// 5.6 TArray<FLandscapeLayer>* overload is gone), so pass the empty view explicitly.
 	Landscape->Import(Guid, 0, 0, VertsX - 1, VertsY - 1, Sections, QuadsPerSection, HeightData, TEXT(""), Layers, ELandscapeImportAlphamapType::Additive,

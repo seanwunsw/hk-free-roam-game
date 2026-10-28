@@ -27,6 +27,28 @@ PROJECT = ROOT / "UnrealProject"
 PLUGIN = PROJECT / "Plugins" / "VRM4U"
 ZIP = ROOT / "data" / "raw" / ASSET
 
+# VRM4U refreshes the Content Browser at the end of every import. Under
+# UnrealEditor-Cmd (-run=HKBakeWorld) there is no Slate application and UE 5.8.4
+# asserts CurrentApplication.IsValid(). The assets are already saved by then, so
+# skip that UI step when running as a commandlet. tools/get_vrm4u.ps1 applies the
+# same edit; keep the two strings identical.
+PATCH_FILE = Path("Source/VRM4ULoader/Private/LoaderBPFunctionLibrary.cpp")
+PATCH_OLD = "if (VRMConverter::IsImportMode()){"
+PATCH_NEW = "if (VRMConverter::IsImportMode() && !IsRunningCommandlet()){ // HK patch: no Content Browser in commandlets"
+
+
+def patch_plugin(plugin: Path) -> bool:
+    """Apply the HK commandlet patch to an extracted VRM4U. Idempotent."""
+    path = plugin / PATCH_FILE
+    text = path.read_text(encoding="utf-8-sig")
+    if PATCH_NEW in text:
+        return True
+    if text.count(PATCH_OLD) != 1:
+        print(f"VRM4U patch target not found exactly once in {path}", file=sys.stderr)
+        return False
+    path.write_text(text.replace(PATCH_OLD, PATCH_NEW), encoding="utf-8")
+    return True
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -67,6 +89,8 @@ def main() -> int:
                 shutil.copyfileobj(src, dst)
     if not (PLUGIN / "VRM4U.uplugin").exists():
         print(f"VRM4U.uplugin not found under {PLUGIN}", file=sys.stderr)
+        return 1
+    if not patch_plugin(PLUGIN):
         return 1
     (PLUGIN / "HK_VRM4U_VERSION.txt").write_text(f"{TAG} {ASSET} {SHA256}\n")
     print(f"VRM4U {TAG} installed in {PLUGIN}")

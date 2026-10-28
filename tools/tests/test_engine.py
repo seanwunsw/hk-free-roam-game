@@ -54,3 +54,23 @@ def test_substrate_explicit() -> None:
     section = lines[lines.index("[/Script/Engine.RendererSettings]") + 1:]
     section = section[:next((i for i, line in enumerate(section) if line.startswith("[")), len(section))]
     assert "r.Substrate=False" in section
+
+
+def test_vrm4u_patch_is_idempotent(tmp_path):
+    from tools import get_vrm4u as g
+
+    src = tmp_path / g.PATCH_FILE
+    src.parent.mkdir(parents=True)
+    src.write_text("a\n\tif (VRMConverter::IsImportMode()){\n\t\tUI();\n\t}\n", encoding="utf-8")
+    assert g.patch_plugin(tmp_path)
+    once = src.read_text(encoding="utf-8")
+    assert g.PATCH_NEW in once and once.count("IsImportMode") == 1
+    assert g.patch_plugin(tmp_path)
+    assert src.read_text(encoding="utf-8") == once
+
+
+def test_vrm4u_patch_strings_match_ps1():
+    from tools import get_vrm4u as g
+
+    ps1 = (g.ROOT / "tools" / "get_vrm4u.ps1").read_text(encoding="utf-8")
+    assert f'"{g.PATCH_OLD}"' in ps1 and f'"{g.PATCH_NEW}"' in ps1

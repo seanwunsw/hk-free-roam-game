@@ -46,6 +46,19 @@ Expand-Archive -Path $Zip -DestinationPath $Project -Force
 if (-not (Test-Path (Join-Path $Plugin "VRM4U.uplugin"))) {
     throw "VRM4U.uplugin not found under $Plugin after extract."
 }
+# Same HK patch as tools/get_vrm4u.py (see the comment there): no Content Browser refresh
+# under UnrealEditor-Cmd, where UE 5.8.4 has no Slate application and asserts.
+$PatchFile = Join-Path $Plugin "Source\VRM4ULoader\Private\LoaderBPFunctionLibrary.cpp"
+$PatchOld  = "if (VRMConverter::IsImportMode()){"
+$PatchNew  = "if (VRMConverter::IsImportMode() && !IsRunningCommandlet()){ // HK patch: no Content Browser in commandlets"
+$Text = [IO.File]::ReadAllText($PatchFile)
+if (-not $Text.Contains($PatchNew)) {
+    if (([regex]::Matches($Text, [regex]::Escape($PatchOld))).Count -ne 1) {
+        throw "VRM4U patch target not found exactly once in $PatchFile"
+    }
+    [IO.File]::WriteAllText($PatchFile, $Text.Replace($PatchOld, $PatchNew))
+}
+Write-Host "Applied HK patch to $PatchFile"
 Set-Content -Path (Join-Path $Plugin "HK_VRM4U_VERSION.txt") -Value "$Tag $Asset $Sha256"
 Write-Host "VRM4U $Tag installed in $Plugin"
 Write-Host "Next: right-click HKFreeRoam.uproject > Generate Visual Studio project files, then build."

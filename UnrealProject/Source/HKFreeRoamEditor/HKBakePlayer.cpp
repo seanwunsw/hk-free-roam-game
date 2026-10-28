@@ -569,7 +569,7 @@ bool RunBatchRetarget(const TArray<FAssetData>& Assets, USkeletalMesh* Source, U
 }
 
 /** Exact name, else the shortest name ending in "_<Clip>" (so "Idle_Loop" is not "Swim_Idle_Loop"). */
-UAnimSequence* FindClip(const TArray<UAnimSequence*>& Anims, const FString& Clip, const FString& Suffix)
+UAnimSequence* FindClip(const TArray<UAnimSequence*>& Anims, const FString& Clip, const FString& Suffix, const FString& Prefix = FString())
 {
 	if (Clip.IsEmpty())
 	{
@@ -578,6 +578,22 @@ UAnimSequence* FindClip(const TArray<UAnimSequence*>& Anims, const FString& Clip
 	const FString Exact = Clip + Suffix;
 	const FString Tail = TEXT("_") + Exact;
 	UAnimSequence* Best = nullptr;
+	// UE 5.8 Interchange names clips <file><clip> with no separator (UAL1_HKSwim_Idle_Loop), so
+	// strip the file-name prefix before the exact match; otherwise "Idle_Loop" tail-matches the
+	// swim idle and every other clip goes missing.
+	for (UAnimSequence* Anim : Anims)
+	{
+		FString Stem = Anim->GetName();
+		if (!Prefix.IsEmpty() && Stem.StartsWith(Prefix, ESearchCase::IgnoreCase))
+		{
+			Stem.RightChopInline(Prefix.Len());
+			Stem.RemoveFromStart(TEXT("_"));
+		}
+		if (Stem.Equals(Exact, ESearchCase::IgnoreCase))
+		{
+			return Anim;
+		}
+	}
 	for (UAnimSequence* Anim : Anims)
 	{
 		const FString Name = Anim->GetName();
@@ -1065,7 +1081,7 @@ EHKStep RetargetClips(const FHKPlayerConfig& Config, const FHKImportedModel& Mod
 	TArray<FAssetData> ToRetarget;
 	for (const TPair<FString, FString>& Clip : Config.Clips)
 	{
-		if (UAnimSequence* Anim = FindClip(SourceAnims, Clip.Value, FString()))
+		if (UAnimSequence* Anim = FindClip(SourceAnims, Clip.Value, FString(), FPaths::GetBaseFilename(Config.Animations)))
 		{
 			Wanted.Add(Clip.Key, Anim);
 			ToRetarget.AddUnique(FAssetData(Anim));
