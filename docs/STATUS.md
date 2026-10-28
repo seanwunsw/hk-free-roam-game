@@ -182,6 +182,6 @@ WIP 冇跟嘅 hunk：`HeightData`／`Layers` 改鍵做 `FGuid()`。呢個唔係�
 
 Sean 部機 pull `46cd1b5` 之後再 build `HKFreeRoamEditor` Win64 Development：**全部 compile 都過咗**，game module `UnrealEditor-HKFreeRoam.dll` link 成功，VRM4U 都編到。所以上一節嘅修正（包括 `HKBakeLibrary.cpp` include 之後嗰段、`LogHK` export、Nanite getter/setter、`Import` 嘅 `TArrayView`）喺 MSVC 已經證實編譯得到。只係 `UnrealEditor-HKFreeRoamEditor.dll` link 失敗：`HKBakePlayer.cpp.obj` 有 7 個 unresolved external（LNK2019／LNK1120），全部係 `FSlateAttributeDescriptor::FInitializer`、`SWidget`／`SCompoundWidget`／`SBorder::PrivateRegisterAttributes`，嚟自 `RetargetEditor` header 入面嘅 `STableRow<FRetargetChainElement>`。
 
-修正：`HKFreeRoamEditor.Build.cs` 加 `Slate`、`SlateCore` private dependency。**未再編譯**。上一節話「冇加 Slate」嗰個判斷錯咗。未烘焙、未 Play。
+修正：`HKFreeRoamEditor.Build.cs` 加 `Slate`、`SlateCore` private dependency。已驗證：`96eab13` 喺 Sean 部機再 build，link 成功，`Result: Succeeded`（2026-10-28 20:02 英國時間）。上一節話「冇加 Slate」嗰個判斷錯咗。未烘焙、未 Play。
 
 呢部機只得 16 GB RAM，build 時 UBT 限制得 1 個 action 同時跑，成次 build 用咗大約 53 分鐘（UBA 3190 秒）。
