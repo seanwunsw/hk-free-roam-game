@@ -12,6 +12,14 @@
 - 授權：CC0 1.0 Universal（Public Domain Dedication），https://creativecommons.org/publicdomain/zero/1.0/ 。zip 入面 `License.txt` 寫明。CC0 唔要求署名，呢度寫出嚟只係方便追來源。
 - 改動：用 `tools/characters/trim_glb.py` 淨係留低 11 段 clip（Idle_Loop、Walk_Loop、Jog_Fwd_Loop、Sprint_Loop、Jump_Start、Jump_Loop、Jump_Land、Swim_Idle_Loop、Swim_Fwd_Loop、Sitting_Idle_Loop、Driving_Loop），mesh、skin（65 bones，UE mannequin 命名）同動畫數據 byte-for-byte 冇改。
 
+## 正式玩家角色：`player.vrm`（底：いつつ用ちび素体）
+
+- 檔：`data/characters/player.vrm`（Git LFS；VRoid Studio 2.14.0 export，VRM 0.0，16,812,424 bytes，SHA-256 `bd177301670593e490188cda5d9a7296f97857264972c1eab8fe66cdf8a55811`）
+- 素體：「いつつ用ちび素体女性」（ちび素体・女性）by ichiei，VRoid Hub：https://hub.vroid.com/en/characters/4546129584464005032/models/7883792065184134379 （BOOTH 嗰份 `.vroid`，`chibi-vroid20231011.zip`，做底）
+- 授權（2026-10-28 喺 VRoid Hub 頁面核對）：作者描述寫「無料かつCC0」；Hub 嘅使用條件：Avatar use、Violent、Sexual、Corporate use、Individual commercial use、Redistribution、Alterations 全部 Allow，Attribution: Not required。即係 CC0 噉用，唔使署名，呢度寫出嚟只係方便追來源。
+- 改動（Sean，VRoid Studio 2.14）：面型、頭髮（長直、側髮）、眼重新調過；VRoid 內置衫（上衣 37 blazer、裙 25、襪 18、loafers 41）重新上色：blazer `#7A5236` 金鈕 `#D4A23A`、煲呔 `#8E1F2A`、格仔裙 `#6B4A33`／`#A07E5C`、襪 `#3B2A22`；頭髮 `#C8282E`；眼 `#B8662A`。金色髮夾未做。
+- 呢個 export 本身嘅 VRM meta：title `shanachibi`、author `Se`、`licenseName: Other`（`otherLicenseUrl`／`otherPermissionUrl` 寫 `CC0`）、allowedUser `Everyone`、commercial／violent／sexual 寫 `Disallow`。呢啲係 Sean 對自己衍生模型定嘅條件，唔影響素體嘅 CC0；遊戲係 Sean 自己用，冇衝突。
+
 ## 工具：VRM4U（唔入 git）
 
 - `tools/get_vrm4u.ps1` 下載去 `UnrealProject/Plugins/VRM4U/`。MIT License，© Haruyoshi Yamamoto，https://github.com/ruyo/VRM4U 。佢入面帶 assimp（BSD-3-Clause）同 nlohmann/json（MIT），授權檔喺 plugin 目錄入面。

@@ -4,6 +4,16 @@
 
 呢張係 Sean 定咗嘅最終設計。下面係用 VRoid Studio 整出嚟嘅步驟。**全部未試過**：VRoid 唔同版本嘅 slider 名同位置可能唔同，搵唔到就揾意思最近嗰個。
 
+## 狀態（2026-10-28）
+
+- **已 export**：`data/characters/player.vrm`（VRM 0.0，VRoid Studio 2.14.0，高約 1.21 m，T-pose，面向 -Z）。來源同授權見 `data/characters/CREDITS.md`。
+- 已知同設計圖唔同：
+  - 冇金色髮夾（VRoid MCP 冇 Accessories，未加）。
+  - 表情只有 VRoid 預設（neutral、joy、fun、angry、sorrow、blink、a/i/u/e/o 口形）；預設面係合口笑，設計圖嗰種開口笑要靠表情／blendshape。
+  - Pose 係 export 原樣（T-pose）；動畫靠烘焙時 retarget。
+  - 公仔質感未做到 1:1，靠烘焙嘅 figure 物料。
+- 換咗模型要重新烘焙：`-run=HKBakeWorld -PlayerOnly`（見 `data/characters/README.md` 第 4 步）。
+
 ## 1. 素體
 
 - 用「いつつ用ちび素体」（CC0）做底：https://hub.vroid.com/en/characters/4546129584464005032/models/7883792065184134379
