@@ -185,3 +185,9 @@ Sean 部機 pull `46cd1b5` 之後再 build `HKFreeRoamEditor` Win64 Development�
 修正：`HKFreeRoamEditor.Build.cs` 加 `Slate`、`SlateCore` private dependency。已驗證：`96eab13` 喺 Sean 部機再 build，link 成功，`Result: Succeeded`（2026-10-28 20:02 英國時間）。上一節話「冇加 Slate」嗰個判斷錯咗。未烘焙、未 Play。
 
 呢部機只得 16 GB RAM，build 時 UBT 限制得 1 個 action 同時跑，成次 build 用咗大約 53 分鐘（UBA 3190 秒）。
+
+## 第一次烘焙（2026-10-28，`e0c5ddc`）
+
+`-run=HKBakeWorld` 喺 Sean 部機匯入 `data/characters/player.vrm` 時 crash（exit 3）。VRM4U `ConvertModel`、`ConvertRig`、`ConvertIKRig`、`ConvertMorphTarget` 都行完，`SK_player` build 成功；之後 `VRMConverter::ConvertPose()`（`VrmConvertPose.cpp:1424`）喺 `GWorld` spawn `ASkeletalMeshActor`，引擎 assert：`InMeshDesc.Scene && InMeshDesc.Scene->GetSkeletalMeshUpdater()`（`SkeletalRenderGPUSkin.cpp:673`，「Scene cannot be null when creating a SkeletalMeshObject」）。
+
+修正：`ImportVrm` 設 `Options.bSkipRetargeter = true`。VRM4U 源碼入面呢個 flag 只喺 `ConvertPose` 開頭用嚟直接 return，唔影響 `ConvertIKRig`（`IK_*_Mannequin` 喺 `ConvertPose` 之前已經寫好）。烘焙自己整 `RTG_UAL_To_Player`，冇讀 VRM4U 嘅 `POSE_retarget_*`。**未再烘焙**。

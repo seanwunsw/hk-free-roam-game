@@ -940,6 +940,11 @@ bool ImportVrm(const FString& File, FHKImportedModel& Out)
 	FImportOptionData Options;
 	// Not a UPROPERTY, so only C++ can set it. Makes VRM4U write IK_<name>_Mannequin.
 	Options.bGenerateRigIK = true;
+	// VRM4U's ConvertPose spawns an ASkeletalMeshActor in GWorld to build its own retarget
+	// pose asset. Under the commandlet that world has no FScene and UE 5.8.4 asserts
+	// ("Scene cannot be null when creating a SkeletalMeshObject"). The bake builds its own
+	// RTG_UAL_To_Player and never reads VRM4U's pose asset, so skip that step.
+	Options.bSkipRetargeter = true;
 	const FString Base = FPaths::GetBaseFilename(File);
 	UVrmAssetListObject* Result = UVrmImporterBPFunctionLibrary::ImportVRMFileWithOptions(File, FString(ModelDir) / Base, Options);
 	if (!Result || !Result->SkeletalMesh)
