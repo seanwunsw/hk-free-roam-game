@@ -34,7 +34,11 @@ public class HKFreeRoamEditor : ModuleRules
 			"EditorScriptingUtilities",
 			"AssetTools",
 			"IKRig",
-			"IKRigEditor"
+			"IKRigEditor",
+			// RetargetEditor headers pull in STableRow/SBorder; their attribute
+			// registration lives in these two modules (LNK2019 on UE 5.8.4 without them).
+			"Slate",
+			"SlateCore"
 		});
 
 		// VRM4U is optional and gitignored (tools/get_vrm4u.ps1 fetches it). Link it only when
