@@ -106,9 +106,6 @@ bool SaveAsset(UObject* Object)
 	UPackage* Package = Object->GetOutermost();
 	const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
-	// On a re-bake the old .uasset is still open by its loader, so Windows refuses to overwrite it
-	// and every tile logged "Could not save". Detach the loader before saving.
-	ResetLoaders(Package);
 	FSavePackageArgs Args;
 	Args.TopLevelFlags = RF_Public | RF_Standalone;
 	Args.SaveFlags = SAVE_None;
@@ -122,6 +119,12 @@ bool SaveAsset(UObject* Object)
 
 UObject* ReplaceObject(UPackage* Package, const FString& Name, UClass* Class)
 {
+	// On a re-bake the package already exists on disk and is only partially loaded. SavePackage
+	// refuses such a package, which is why every re-baked tile logged "Could not save".
+	if (!Package->IsFullyLoaded())
+	{
+		Package->FullyLoad();
+	}
 	if (UObject* Existing = StaticFindObject(Class, Package, *Name))
 	{
 		Existing->ClearFlags(RF_Standalone | RF_Public);
