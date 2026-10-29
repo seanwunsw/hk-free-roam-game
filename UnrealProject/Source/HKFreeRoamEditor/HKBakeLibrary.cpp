@@ -30,6 +30,7 @@
 #include "FileHelpers.h"
 #include "GameFramework/PhysicsVolume.h"
 #include "GameFramework/PlayerStart.h"
+#include "GameMapsSettings.h"
 #include "Landscape.h"
 #include "LandscapeInfo.h"
 #include "Materials/Material.h"
@@ -1019,7 +1020,7 @@ bool UHKBakeLibrary::BakeWorld()
 			FRotator(0.f, HKAxes::GameYawToUnreal(Spawn.Yaw), 0.f), Params);
 		if (Start)
 		{
-			Start->SetActorLabel(TEXT("PlayerStart_Central"));
+			Start->SetActorLabel(FString::Printf(TEXT("PlayerStart_%s"), *Spawn.Id));
 			MarkSpatial(Start, nullptr, false);
 		}
 	}
@@ -1093,10 +1094,16 @@ bool UHKBakeLibrary::BakeWorld()
 		UE_LOG(LogHK, Error, TEXT("Saving %s failed"), MapPackage);
 		return false;
 	}
-	const FString Ini = FPaths::Combine(FPaths::ProjectConfigDir(), TEXT("DefaultEngine.ini"));
-	GConfig->SetString(TEXT("/Script/EngineSettings.GameMapsSettings"), TEXT("GameDefaultMap"), TEXT("/Game/Maps/HKWorld.HKWorld"), Ini);
-	GConfig->SetString(TEXT("/Script/EngineSettings.GameMapsSettings"), TEXT("EditorStartupMap"), TEXT("/Game/Maps/HKWorld.HKWorld"), Ini);
-	GConfig->Flush(false, Ini);
+	// GConfig->SetString on DefaultEngine.ini is not written back on UE 5.8, so go through the
+	// settings object, which saves into Config/DefaultEngine.ini.
+	const FString HKWorldPath = TEXT("/Game/Maps/HKWorld.HKWorld");
+	UGameMapsSettings::SetGameDefaultMap(HKWorldPath);
+	UGameMapsSettings* MapsSettings = GetMutableDefault<UGameMapsSettings>();
+	MapsSettings->EditorStartupMap = FSoftObjectPath(HKWorldPath);
+	if (!MapsSettings->TryUpdateDefaultConfigFile())
+	{
+		UE_LOG(LogHK, Warning, TEXT("Could not write the startup map to DefaultEngine.ini (is it read-only?)"));
+	}
 	UE_LOG(LogHK, Display, TEXT("Bake finished. Meshes %d, failed %d, cars %d, helicopters %d. Startup map is now HKWorld."),
 		Imported, Failed, Cars.Num(), Helis.Num());
 	UE_LOG(LogHK, Display, TEXT("HLOD proxies were not generated. Optional: -run=WorldPartitionBuilderCommandlet -Builder=WorldPartitionHLODsBuilder /Game/Maps/HKWorld"));
