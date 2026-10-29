@@ -1,11 +1,11 @@
 # 點樣開、build、烘焙、玩
 
-引擎版本淨係睇 `UnrealProject/HKFreeRoam.uproject` 嘅 `EngineAssociation`。而家寫住 **5.6**，安裝要同呢個欄位一樣。
+引擎版本淨係睇 `UnrealProject/HKFreeRoam.uproject` 嘅 `EngineAssociation`。而家寫住 **5.8**，安裝要同呢個欄位一樣。
 
 ## 環境
 
 - Unreal Engine，版本 = `EngineAssociation`
-- Visual Studio 2022，「Game development with C++」（MSVC、Windows SDK）
+- Visual Studio 2022 **17.14 或以上**，或者 Visual Studio 2026；「Game development with C++」（MSVC 最低 14.38、Windows SDK 最低 10.0.22621.0）
 - Git LFS
 
 `data/processed` 已經包含高度圖、道路、建築物 glTF、出生點同小地圖。`data/raw` 唔入 git。
@@ -24,13 +24,15 @@
 5. 烘焙會建立 `/Game/Maps/HKWorld`，並把 `DefaultEngine.ini` 嘅 `GameDefaultMap` 同 `EditorStartupMap` 改去呢張圖。之前嗰兩行指向引擎模板，係為咗地圖未存在時編輯器都開到。
 6. 打開專案，Play。玩家由中環附近開始。
 
+玩家角色（模型、物料、動畫）同世界一齊烘焙。淨係換角色就喺第 4 步個命令加 `-PlayerOnly`。換 VRoid 模型、刪暫代角色：[data/characters/README.md](../data/characters/README.md)；正式角色設計同 VRoid 步驟：[characters/VROID.md](characters/VROID.md)。
+
 另一個入口係 `UnrealProject/Content/Python/bake_hk_world.py`，佢呼叫 `unreal.HKBakeLibrary.bake_world()`，同 commandlet 係同一段 C++。
 
 烘焙要為大約 2461 個 tile 建 Nanite mesh，喺 RTX 3060 上可能要幾十分鐘到幾個鐘。
 
 ## 玩法
 
-步行：WASD、Shift 跑、Space 跳、滑鼠望。水面冇碰撞；角色低過海平面會游（bake 咗一個 bWaterVolume 嘅 physics volume，由 CharacterMovement 處理入水出水）。
+步行：WASD、Shift 跑、Space 跳、滑鼠望。冇烘到角色模型時玩家係一個方塊，log 有 `Player: no baked avatar`。水面冇碰撞；角色低過海平面會游（bake 咗一個 bWaterVolume 嘅 physics volume，由 CharacterMovement 處理入水出水）。
 
 F：450 cm 內最近嘅車，或者 700 cm 內最近嘅直升機。再按 F 喺載具右邊落車。鏡頭大約 0.6 秒 blend。
 

@@ -1,6 +1,8 @@
 #include "HKBakeLibrary.h"
 
 #include "HKAxes.h"
+#include "HKBakePlayer.h"
+#include "HKFreeRoamCharacter.h"
 #include "HKCar.h"
 #include "HKFreeRoam.h"
 #include "HKFreeRoamGameMode.h"
@@ -21,7 +23,6 @@
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Engine/SkeletalMesh.h"
-#include "Engine/SkyAtmosphere.h"
 #include "Engine/SkyLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
@@ -146,7 +147,8 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	Material->BlendMode = bTranslucent ? BLEND_Translucent : BLEND_Opaque;
 	if (bNanite)
 	{
-		Material->bUsedWithNanite = true;
+		// bUsedWithNanite is UE_DEPRECATED(5.8). SetMaterialUsage(EMaterialUsage) is the virtual replacement.
+		Material->SetMaterialUsage(MATUSAGE_Nanite);
 	}
 
 	UMaterialExpressionCustom* Custom = NewObject<UMaterialExpressionCustom>(Material);
@@ -212,8 +214,7 @@ UMaterial* MakeCarMaterial()
 		Editor->BaseColor.Connect(0, Color);
 		Editor->Roughness.Connect(0, Rough);
 	}
-	bool bNeedsRecompile = false;
-	Material->SetMaterialUsage(bNeedsRecompile, MATUSAGE_SkeletalMesh);
+	Material->SetMaterialUsage(MATUSAGE_SkeletalMesh);
 	return FinishMaterial(Material);
 }
 
@@ -345,9 +346,9 @@ UStaticMesh* BuildMesh(
 	Params.bCommitMeshDescription = true;
 	Mesh->BuildFromMeshDescriptions(Descriptions, Params);
 
-	FMeshNaniteSettings Nanite = Mesh->NaniteSettings;
+	FMeshNaniteSettings Nanite = Mesh->GetNaniteSettings();
 	Nanite.bEnabled = bNanite;
-	Mesh->NaniteSettings = Nanite;
+	Mesh->SetNaniteSettings(Nanite);
 	if (Mesh->GetNumSourceModels() > 0)
 	{
 		FStaticMeshSourceModel& Model = Mesh->GetSourceModel(0);
@@ -355,7 +356,7 @@ UStaticMesh* BuildMesh(
 		Model.BuildSettings.bRecomputeTangents = true;
 		Model.BuildSettings.DistanceFieldResolutionScale = 0.25f;
 	}
-	// 5.6 has Build(const FBuildParameters&) and Build(bool, TArray<FText>*). One argument does not match either.
+	// 5.6 and 5.8 both have Build(const FBuildParameters&) and Build(bool, TArray<FText>*). One argument does not match either.
 	Mesh->Build(true, nullptr);
 
 	Mesh->CreateBodySetup();
@@ -684,7 +685,8 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 		return false;
 	}
 	const FGuid Guid = FGuid::NewGuid();
-	Landscape->bCanHaveLayersContent = false;
+	// UE 5.7 ALandscapeProxy no longer has bCanHaveLayersContent (member list and the
+	// deprecated list). CanHaveLayersContent() is only a getter; edit layers are always on.
 	Landscape->SetLandscapeGuid(Guid);
 	Landscape->LandscapeMaterial = Material;
 	Landscape->SetActorTransform(FTransform(
@@ -692,11 +694,16 @@ bool ImportLandscape(UWorld* World, const TSharedPtr<FJsonObject>& LandscapeObje
 		HKAxes::GameToUnreal(MinX, MaxY, 0.0),
 		FVector(SpacingX * 100.0, SpacingY * 100.0, ZScale)));
 
+	// Import() looks the data up under the final edit layer's key, which is an empty FGuid
+	// (LandscapeEdit.cpp: FindChecked(FGuid())), not the landscape's own guid.
 	TMap<FGuid, TArray<uint16>> HeightData;
-	HeightData.Add(Guid, Heights);
+	HeightData.Add(FGuid(), Heights);
 	TMap<FGuid, TArray<FLandscapeImportLayerInfo>> Layers;
-	Layers.Add(Guid, TArray<FLandscapeImportLayerInfo>());
-	Landscape->Import(Guid, 0, 0, VertsX - 1, VertsY - 1, Sections, QuadsPerSection, HeightData, TEXT(""), Layers, ELandscapeImportAlphamapType::Additive);
+	Layers.Add(FGuid(), TArray<FLandscapeImportLayerInfo>());
+	// UE 5.8 keeps only the overload whose last argument is TArrayView<const FLandscapeLayer> (the
+	// 5.6 TArray<FLandscapeLayer>* overload is gone), so pass the empty view explicitly.
+	Landscape->Import(Guid, 0, 0, VertsX - 1, VertsY - 1, Sections, QuadsPerSection, HeightData, TEXT(""), Layers, ELandscapeImportAlphamapType::Additive,
+		TArrayView<const FLandscapeLayer>());
 	Landscape->StaticLightingLOD = 2;
 	if (ULandscapeInfo* Info = Landscape->GetLandscapeInfo())
 	{
@@ -822,6 +829,17 @@ bool UHKBakeLibrary::BakeWorld()
 	}
 	if (!DeleteOldMap())
 	{
+		return false;
+	}
+	switch (HKBakePlayer::Bake())
+	{
+	case HKBakePlayer::EResult::Written:
+		break;
+	case HKBakePlayer::EResult::NoModel:
+		UE_LOG(LogHK, Warning, TEXT("Player avatar not baked; the world bake continues and the game uses the cube body"));
+		break;
+	case HKBakePlayer::EResult::Failed:
+		UE_LOG(LogHK, Error, TEXT("Player bake failed (see the errors above); fix it or remove the model from data/config/player.json"));
 		return false;
 	}
 	ConfigurePartition(World);
@@ -996,7 +1014,8 @@ bool UHKBakeLibrary::BakeWorld()
 		FHKSpawn Spawn;
 		ReadSpawn(*Player, Spawn);
 		APlayerStart* Start = World->SpawnActor<APlayerStart>(
-			HKAxes::GameToUnreal(Spawn.X, Spawn.Y, Spawn.Z) + FVector(0.0, 0.0, 120.0),
+			HKAxes::GameToUnreal(Spawn.X, Spawn.Y, Spawn.Z)
+				+ FVector(0.0, 0.0, AHKFreeRoamCharacter::DefaultCapsuleHalfHeight + AHKFreeRoamCharacter::GroundClearance),
 			FRotator(0.f, HKAxes::GameYawToUnreal(Spawn.Yaw), 0.f), Params);
 		if (Start)
 		{
@@ -1082,4 +1101,14 @@ bool UHKBakeLibrary::BakeWorld()
 		Imported, Failed, Cars.Num(), Helis.Num());
 	UE_LOG(LogHK, Display, TEXT("HLOD proxies were not generated. Optional: -run=WorldPartitionBuilderCommandlet -Builder=WorldPartitionHLODsBuilder /Game/Maps/HKWorld"));
 	return true;
+}
+
+bool UHKBakeLibrary::BakePlayer()
+{
+	if (!GEditor)
+	{
+		UE_LOG(LogHK, Error, TEXT("BakePlayer needs the editor. Use UnrealEditor-Cmd -run=HKBakeWorld -PlayerOnly."));
+		return false;
+	}
+	return HKBakePlayer::Bake() == HKBakePlayer::EResult::Written;
 }

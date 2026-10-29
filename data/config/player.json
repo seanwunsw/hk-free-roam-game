@@ -1,0 +1,28 @@
+{
+  "model": "data/characters/player.vrm",
+  "placeholder_model": "data/characters/placeholder/cute_chibi_girl.glb",
+  "animations": "data/characters/animations/UAL1_HK.glb",
+  "clips": {
+    "idle": "Idle_Loop",
+    "walk": "Walk_Loop",
+    "jog": "Jog_Fwd_Loop",
+    "sprint": "Sprint_Loop",
+    "jump_start": "Jump_Start",
+    "jump_loop": "Jump_Loop",
+    "land": "Jump_Land",
+    "swim_idle": "Swim_Idle_Loop",
+    "swim_fwd": "Swim_Fwd_Loop",
+    "sit": "Sitting_Idle_Loop",
+    "drive": "Driving_Loop"
+  },
+  "anim_ref_speed_cm_s": {
+    "walk": 150,
+    "jog": 340,
+    "sprint": 560,
+    "swim": 200
+  },
+  "target_height_cm": 120,
+  "mesh_yaw_deg": -90,
+  "materials": "figure",
+  "outline": false
+}

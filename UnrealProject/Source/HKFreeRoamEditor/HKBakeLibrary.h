@@ -12,4 +12,8 @@ class HKFREEROAMEDITOR_API UHKBakeLibrary : public UBlueprintFunctionLibrary
 public:
 	UFUNCTION(BlueprintCallable, Category = "HK")
 	static bool BakeWorld();
+
+	/** Player avatar only (data/config/player.json -> /Game/HK/Player). Fast; no world rebuild. */
+	UFUNCTION(BlueprintCallable, Category = "HK")
+	static bool BakePlayer();
 };

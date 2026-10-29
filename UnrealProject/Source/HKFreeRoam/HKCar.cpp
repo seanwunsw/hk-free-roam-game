@@ -181,13 +181,13 @@ void AHKCar::PatchWheelBones()
 	}
 }
 
-void AHKCar::SetVehicleMesh(USkeletalMesh* Mesh, UPhysicsAsset* PhysicsAsset)
+void AHKCar::SetVehicleMesh(USkeletalMesh* NewMesh, UPhysicsAsset* PhysicsAsset)
 {
-	if (!Mesh)
+	if (!NewMesh)
 	{
 		return;
 	}
-	GetMesh()->SetSkeletalMeshAsset(Mesh);
+	GetMesh()->SetSkeletalMeshAsset(NewMesh);
 	if (PhysicsAsset)
 	{
 		GetMesh()->SetPhysicsAsset(PhysicsAsset);
