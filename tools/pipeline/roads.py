@@ -326,6 +326,42 @@ def bridge_over_trenches(roads: list[dict], log=print) -> list[dict]:
     return out
 
 
+def deck_over_sea(roads: list[dict], open_sea_at, log=print) -> list[dict]:
+    """Ground and open-cut tunnel stretches over open sea become low decks.
+
+    Both drape on the landscape, and carving the landscape up to them would
+    build a causeway across the water (the cross-harbour tubes used to make a
+    land bridge from Hung Hom to Causeway Bay). Instead the stretch keeps its
+    design height as a fixed deck and the seabed under it stays open.
+    """
+    out = []
+    decks = 0
+    for road in roads:
+        if road["mode"] not in {"ground", "tunnel"} or len(road["xy"]) < 2 or "design" not in road:
+            out.append(road)
+            continue
+        wet = np.asarray(open_sea_at(road["xy"][:, 0], road["xy"][:, 1]), dtype=bool)
+        if not wet.any():
+            out.append(road)
+            continue
+        wet = maximum_filter1d(wet.astype(np.int8), size=5, mode="nearest") > 0
+        n = len(road["xy"])
+        for s, e in _runs(~wet):
+            if e - s >= 2:
+                out.append(slice_road(road, s, e))
+        for s, e in _runs(wet):
+            piece = slice_road(road, max(0, s - 1), min(n, e + 1))
+            if len(piece["xy"]) < 2:
+                continue
+            piece["mode"] = "bridge"
+            piece["layer"] = 0
+            piece["deck_fixed"] = np.maximum(piece["design"], 0.40) + ground_lift(road["highway"])
+            out.append(piece)
+            decks += 1
+    log(f"ground/tunnel stretches decked over open sea {decks}")
+    return out
+
+
 def _segment_arrays(roads: list[dict]):
     """Per segment: ends, design heights, and the half-widths each side that the
     carve treats as the road core (full weight) and the outer corridor."""

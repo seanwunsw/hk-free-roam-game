@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tools.hkwarp.check_map import load_dem, measure_harbour
+from tools.hkwarp.check_map import harbour_clearance, load_dem, measure_harbour
 from tools.hkwarp.warp import build_warp, repo_root
 from tools.pipeline.dem import load_srtm, sample_srtm
 from tools.pipeline.geometry import (
@@ -38,12 +38,20 @@ from tools.pipeline.geometry import (
     signed_area,
 )
 from tools.pipeline.glbutil import write_glb
+from tools.pipeline import coast as coastmask
 from tools.pipeline import roads as roadnet
 from tools.pipeline import spawns as spawn_rules
 from tools.pipeline.surface import quantize_r16, sample_ue
 
 ROAD_CLASS_SET = set(ROAD_CLASSES)
 SEABED_DROP_M = 2.0
+# OSM coastline decides land and sea. Land never dips under this (low SRTM shore
+# cells would flood); sea slopes from -SEABED_DROP_M at the shore to SHELF_DEPTH_M.
+LAND_MIN_M = 0.6
+SHELF_DEPTH_M = 10.0
+SHELF_FALLOFF_M = 120.0
+DEM_SEA_M = 1.5
+MASK_STEP_DEG = 0.0001
 HEIGHT_BY_KIND = {
     "house": 8.5,
     "detached": 9.0,
@@ -555,7 +563,14 @@ def _invert_columns(warp, xs: np.ndarray, ys: np.ndarray, log: Log) -> tuple[np.
     return x_real.astype(np.float32), y_real
 
 
-def build_terrain(warp, grids, landscape, log: Log) -> np.ndarray:
+def build_terrain(warp, grids, landscape, log: Log, land=None, extract=None) -> tuple[np.ndarray, np.ndarray]:
+    """Height grid (row 0 = south) and the land mask it was built from.
+
+    With `land`/`extract` the OSM coastline decides land and sea inside the
+    extract polygon; outside it, and without them, SRTM above DEM_SEA_M is land.
+    """
+    from scipy.ndimage import distance_transform_edt, gaussian_filter
+
     nx = landscape["verts_x"]
     ny = landscape["verts_y"]
     xs = landscape["min_x"] + np.arange(nx) * landscape["spacing_x"]
@@ -563,33 +578,38 @@ def build_terrain(warp, grids, landscape, log: Log) -> np.ndarray:
     log(f"terrain grid {nx} x {ny}  spacing {landscape['spacing_x']:.2f} x {landscape['spacing_y']:.2f} m")
     x_real, y_real = _invert_columns(warp, xs, ys, log)
     height = np.empty((ny, nx), dtype=np.float32)
-    seabed = np.full((ny, nx), np.inf, dtype=np.float32)
+    is_land = np.empty((ny, nx), dtype=bool)
     rows = 160
     for start in range(0, ny, rows):
         end = min(ny, start + rows)
         yr = y_real[start:end]
-        lon = warp.origin_lon + x_real[None, :] / warp.m_per_deg_lon
+        lon = np.broadcast_to(warp.origin_lon + x_real[None, :] / warp.m_per_deg_lon, yr.shape)
         lat = warp.origin_lat + yr / warp.m_per_deg_lat
-        elev = sample_srtm(grids, np.broadcast_to(lon, yr.shape), lat).astype(np.float32)
+        elev = sample_srtm(grids, lon, lat).astype(np.float32)
         dx, dy = warp.axis_scales(
             np.broadcast_to(x_real, yr.shape).astype(np.float64),
             yr.astype(np.float64),
         )
         horizontal = np.sqrt(np.maximum(dx, 1e-6) * np.maximum(dy, 1e-6))
         height_scale = np.clip(np.sqrt(horizontal), 0.20, 1.25).astype(np.float32)
-        sea = elev <= 1.5
-        height[start:end] = np.where(sea, np.minimum(elev, 0.0) * 0.35, elev * height_scale)
-        seabed[start:end] = np.where(sea, np.minimum(elev, 0.0) * 0.35 - SEABED_DROP_M, np.inf)
+        if land is not None:
+            chunk_land = coastmask.land_at(land, extract, lon, lat, dem_elev=elev, dem_land_m=DEM_SEA_M)
+        else:
+            chunk_land = elev > DEM_SEA_M
+        is_land[start:end] = chunk_land
+        height[start:end] = np.where(chunk_land, np.maximum(elev * height_scale, LAND_MIN_M), np.minimum(elev, 0.0) * 0.35)
         if start % 640 == 0:
             log(f"sampled elevation rows {end}/{ny}")
-    from scipy.ndimage import gaussian_filter
-
+    # Continental shelf: -SEABED_DROP_M at the shore, easing to -SHELF_DEPTH_M offshore.
+    dist = distance_transform_edt(~is_land, sampling=(landscape["spacing_y"], landscape["spacing_x"])).astype(np.float32)
+    shelf = -(SEABED_DROP_M + (SHELF_DEPTH_M - SEABED_DROP_M) * (1.0 - np.exp(-np.maximum(dist - landscape["spacing_x"], 0.0) / SHELF_FALLOFF_M)))
+    height = np.where(is_land, height, np.minimum(height, shelf)).astype(np.float32)
     height = gaussian_filter(height, sigma=0.7).astype(np.float32)
-    # Keep open water at least SEABED_DROP_M under the sea plane so the
-    # landscape cannot poke through the water surface or show as wet sand.
-    height = np.minimum(height, seabed).astype(np.float32)
-    log(f"sea cells {int(np.isfinite(seabed).sum())} pushed to <= -{SEABED_DROP_M} m")
-    return height
+    # Smoothing must not move the shoreline: land stays above the sea plane,
+    # sea stays at least SEABED_DROP_M under it so nothing pokes through the water.
+    height = np.where(is_land, np.maximum(height, LAND_MIN_M), np.minimum(height, -SEABED_DROP_M)).astype(np.float32)
+    log(f"land cells {int(is_land.sum())}  sea cells {int((~is_land).sum())} pushed to <= -{SEABED_DROP_M} m")
+    return height, is_land
 
 
 def bilinear(grid: np.ndarray, xs, ys, landscape) -> np.ndarray:
@@ -611,6 +631,7 @@ def bilinear(grid: np.ndarray, xs, ys, landscape) -> np.ndarray:
 def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
     log(f"preparing {len(extracted['roads'])} roads")
     prepared = []
+    wet_samples = 0
     for road in extracted["roads"]:
         ll = road["ll"]
         gx, gy = warp.lonlat_to_game_m(ll[:, 0], ll[:, 1])
@@ -636,10 +657,16 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
             mode = "tunnel"
         elif road["bridge"]:
             mode = "bridge"
+        if mode == "ground":
+            # A ground road whose samples land on seabed is a seawall, pier or
+            # causeway thinner than the terrain grid: keep it at shore height.
+            wet = terrain_z < LAND_MIN_M
+            wet_samples += int(wet.sum())
+            terrain_z = np.where(wet, LAND_MIN_M, terrain_z)
         prepared.append(roadnet.make_road(xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal))
     tunnels = sum(1 for road in prepared if road["mode"] == "tunnel")
     bridges = sum(1 for road in prepared if road["mode"] == "bridge")
-    log(f"roads kept {len(prepared)}  bridges {bridges}  open-cut tunnels {tunnels}")
+    log(f"roads kept {len(prepared)}  bridges {bridges}  open-cut tunnels {tunnels}  ground samples lifted to shore {wet_samples}")
     return prepared
 
 
@@ -964,7 +991,111 @@ def _find_pad(x: float, y: float, height: np.ndarray, landscape) -> tuple[float,
     return x, y, max(z, 1.0)
 
 
-def _draw_minimap(path: Path, height: np.ndarray, landscape, roads, places) -> dict:
+def build_land_mask(root: Path, pbf: Path, extracted, grids, log: Log):
+    """OSM land polygon (lon/lat) inside the extract polygon, minus sea-level water.
+
+    OSM water polygons that sit at sea level in SRTM (tidal channels, nullahs,
+    fish ponds) become sea so the sea plane shows in them; raised reservoirs
+    stay land and get their own water plane from prepare_water.
+    """
+    import shapely
+
+    poly_path = root / "data" / "config" / "hong-kong.poly"
+    extract = coastmask.read_poly(poly_path)
+    coastlines = coastmask.load_coastlines(pbf)
+    land, stats = coastmask.build_land(coastlines, extract)
+    log(
+        f"coastline ways {stats['coastline_ways']}  faces {stats['faces']}  land {stats['land_faces']}  "
+        f"sea {stats['sea_faces']}  unlabelled {stats['unlabelled_faces']}"
+    )
+    low = []
+    for ring in extracted["waters_ll"]:
+        if len(ring) < 4:
+            continue
+        poly = shapely.make_valid(shapely.Polygon(ring))
+        if poly.is_empty or poly.area <= 0.0:
+            continue
+        probe = shapely.get_coordinates(shapely.point_on_surface(poly))
+        elev = float(sample_srtm(grids, probe[:, 0], probe[:, 1])[0])
+        if elev <= DEM_SEA_M:
+            low.append(poly)
+    if low:
+        land = shapely.difference(land, shapely.union_all(low))
+    km2 = shapely.area(land) * (111_320.0 * 110_570.0 * math.cos(math.radians(22.35))) / 1e6
+    log(f"land mask {km2:.1f} km^2 inside extract  sea-level water polygons {len(low)}")
+    stats["land_km2_in_extract"] = round(km2, 1)
+    stats["sea_level_water_polygons"] = len(low)
+    return land, extract, stats
+
+
+def write_land_mask(out: Path, config, land, extract, grids, log: Log):
+    """North-up lon/lat land raster over the map bounds, for check_map and tools."""
+    b = config["bounds"]
+    lons = np.arange(b["min_lon"], b["max_lon"] + MASK_STEP_DEG * 0.5, MASK_STEP_DEG)
+    lats = np.arange(b["min_lat"], b["max_lat"] + MASK_STEP_DEG * 0.5, MASK_STEP_DEG)
+    mask = np.empty((len(lats), len(lons)), dtype=bool)
+    rows = 400
+    for start in range(0, len(lats), rows):
+        lat = lats[start : start + rows]
+        lon_g, lat_g = np.meshgrid(lons, lat)
+        mask[start : start + rows] = coastmask.land_at(
+            land, extract, lon_g, lat_g, dem_elev=sample_srtm(grids, lon_g, lat_g), dem_land_m=DEM_SEA_M
+        )
+    bounds = {"min_lon": float(lons[0]), "min_lat": float(lats[0]), "max_lon": float(lons[-1]), "max_lat": float(lats[-1])}
+    coastmask.write_mask(out, mask, bounds, MASK_STEP_DEG)
+    log(f"land mask {mask.shape[1]} x {mask.shape[0]}  land {mask.mean() * 100:.1f}%")
+    return coastmask.LandMask(out)
+
+
+def coast_agreement(stored: np.ndarray, is_land: np.ndarray, landscape, warp, extract, spawns, log: Log) -> dict:
+    """How well the stored terrain matches the OSM land/sea mask on the landscape grid."""
+    from tools.pipeline.check_coast import agreement
+
+    import shapely
+
+    lon, lat = _vertex_lonlat(warp, landscape)
+    inside = coastmask.land_at(shapely.box(-180, -90, 180, 90), extract, lon, lat)
+    result = agreement(stored, is_land, inside=inside)
+    wet = []
+    for group in ("cars", "helicopters"):
+        for item in spawns.get(group, []):
+            if not _land_at_game(is_land, landscape, item["x_m"], item["y_m"]):
+                wet.append(item["id"])
+    player = spawns.get("player")
+    if player and not _land_at_game(is_land, landscape, player["x_m"], player["y_m"]):
+        wet.append(player["id"])
+    result["spawns_over_sea"] = wet
+    log(
+        f"coast agreement: OSM sea below 0 {result['sea_below_0_pct']}%  <= -{SEABED_DROP_M:g} m {result['sea_below_seabed_pct']}%  "
+        f"OSM land above 0 {result['land_above_0_pct']}%  spawns over sea {len(wet)}"
+    )
+    return result
+
+
+def _vertex_lonlat(warp, landscape):
+    xs = landscape["min_x"] + np.arange(landscape["verts_x"]) * landscape["spacing_x"]
+    ys = landscape["min_y"] + np.arange(landscape["verts_y"]) * landscape["spacing_y"]
+    x_real, y_real = _invert_columns(warp, xs, ys, lambda *_: None)
+    lon = np.broadcast_to(warp.origin_lon + x_real[None, :] / warp.m_per_deg_lon, y_real.shape)
+    return lon, warp.origin_lat + y_real / warp.m_per_deg_lat
+
+
+def _open_sea_grid(is_land: np.ndarray, landscape, fringe_cells: float = 2.0) -> np.ndarray:
+    """Sea vertices more than `fringe_cells` grid steps from OSM land."""
+    from scipy.ndimage import distance_transform_edt
+
+    return distance_transform_edt(~is_land) > fringe_cells
+
+
+def _land_at_game(is_land: np.ndarray, landscape, x: float, y: float) -> bool:
+    i = int(round((x - landscape["min_x"]) / landscape["spacing_x"]))
+    j = int(round((y - landscape["min_y"]) / landscape["spacing_y"]))
+    i = min(max(i, 0), is_land.shape[1] - 1)
+    j = min(max(j, 0), is_land.shape[0] - 1)
+    return bool(is_land[j, i])
+
+
+def _draw_minimap(path: Path, height: np.ndarray, landscape, roads, places, is_land=None, waters=()) -> dict:
     from PIL import Image, ImageDraw
 
     ny, nx = height.shape
@@ -980,10 +1111,11 @@ def _draw_minimap(path: Path, height: np.ndarray, landscape, roads, places) -> d
     sx = np.clip(np.rint(sample_x).astype(np.int32), 0, nx - 1)
     sampled = height[sy][:, sx]
     rgb = np.empty((img_h, width, 3), dtype=np.uint8)
-    sea = sampled < 0.25
-    low = (sampled >= 0.25) & (sampled < 40.0)
-    mid = (sampled >= 40.0) & (sampled < 220.0)
-    high = sampled >= 220.0
+    # The coastline mask, not the height, decides what is sea.
+    sea = ~is_land[sy][:, sx] if is_land is not None else sampled < 0.25
+    low = ~sea & (sampled < 40.0)
+    mid = ~sea & (sampled >= 40.0) & (sampled < 220.0)
+    high = ~sea & (sampled >= 220.0)
     rgb[sea] = (28, 78, 102)
     rgb[low] = (92, 110, 84)
     rgb[mid] = (70, 108, 72)
@@ -996,6 +1128,10 @@ def _draw_minimap(path: Path, height: np.ndarray, landscape, roads, places) -> d
         v = (landscape["max_y"] - y) / (landscape["max_y"] - landscape["min_y"])
         return u * (width - 1), v * (img_h - 1)
 
+    for water in waters:
+        ring = [to_px(float(x), float(y)) for x, y in water["ring"]]
+        if len(ring) >= 3:
+            draw.polygon(ring, fill=(40, 96, 124))
     for road in roads:
         color = ROAD_DRAW.get(road["highway"], (140, 140, 140))
         center = road["center"]
@@ -1162,12 +1298,24 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     bounds = (landscape["min_x"], landscape["min_y"], landscape["max_x"], landscape["max_y"])
     buildings = prepare_buildings(warp, extracted, bounds, log)
     grids = load_srtm(root / "data" / "raw")
-    height = build_terrain(warp, grids, landscape, log)
+    land, extract, coast_stats = build_land_mask(root, raw, extracted, grids, log)
+    height, is_land = build_terrain(warp, grids, landscape, log, land, extract)
     roads = prepare_roads(warp, extracted, height, landscape, log)
     roads = roadnet.merge_parallel(roads, log)
     roadnet.set_design_profiles(roads)
     roads = roadnet.bridge_over_trenches(roads, log)
+    open_sea = _open_sea_grid(is_land, landscape)
+
+    def open_sea_at(xs, ys):
+        i = np.clip(np.rint((np.asarray(xs) - landscape["min_x"]) / landscape["spacing_x"]).astype(np.int64), 0, open_sea.shape[1] - 1)
+        j = np.clip(np.rint((np.asarray(ys) - landscape["min_y"]) / landscape["spacing_y"]).astype(np.int64), 0, open_sea.shape[0] - 1)
+        return open_sea[j, i]
+
+    roads = roadnet.deck_over_sea(roads, open_sea_at, log)
+    natural = height
     height = roadnet.carve_terrain(height, roads, landscape, log)
+    # Road shoulders may build up a seawall fringe, but never raise open sea.
+    height = np.where(open_sea, np.minimum(height, natural), height).astype(np.float32)
     # Everything placed on the ground samples what terrain.r16 will store,
     # with Unreal's landscape triangulation.
     stored = quantize_r16(height.astype(np.float64))
@@ -1208,9 +1356,13 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     spawns, landmarks, notes = spawn_rules.build_spawns(
         config, warp, roads, index, lambda x, y: _find_pad(x, y, stored, landscape), log
     )
-    minimap = _draw_minimap(out / "minimap.png", height, landscape, roads, landmarks["places"])
+    minimap = _draw_minimap(out / "minimap.png", height, landscape, roads, landmarks["places"], is_land, waters)
+    mask = write_land_mask(out, config, land, extract, grids, log)
     dem = load_dem()
-    harbour_rows = measure_harbour(warp, dem) if dem is not None else []
+    harbour_rows = measure_harbour(warp, dem, is_land=mask.is_land) if dem is not None else []
+    coast_stats["harbour_clearance"] = harbour_clearance(warp, mask.is_land)
+    log(f"harbour clearance Kowloon-HK Island {coast_stats['harbour_clearance'].get('min_m')} m")
+    coast_stats.update(coast_agreement(stored, is_land, landscape, warp, extract, spawns, log))
     coasts = extracted["coasts"]
     previews = _write_previews(out / "previews", warp, height, landscape, roads, coasts, landmarks["places"], harbour_rows, log)
     r16_path = out / "terrain.r16"
@@ -1230,6 +1382,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         "minimap": minimap,
         "previews": previews,
         "harbour": harbour_rows,
+        "coast": coast_stats,
         "notes": notes,
         "counts": {
             "osm_buildings": len(extracted["buildings_ll"]),
@@ -1259,7 +1412,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "Tunnels, including cross-harbour tubes, are open cuts. The deck is the chord between the portals, clamped so it stays above the water plane. There is no bored tunnel and no tunnel roof.",
         "Building courtyards (OSM inner rings) are filled. building:part footprints may still overlap the parent footprint when the part is taller.",
         "Residential, service, footway, path and steps are omitted. Cheung Chau and Lamma only keep unclassified streets, so driving there is local. There is no ferry; walk or fly between islands.",
-        "Terrain is SRTM 1 arc-second, not the Lands Department DTM. Cells at or below 1.5 m are treated as sea and negative bathymetry is scaled by 0.35. Shore noise can remain.",
+        "Terrain heights are SRTM 1 arc-second, not the Lands Department DTM. Land and sea come from OSM natural=coastline inside the Geofabrik extract polygon (SRTM > 1.5 m outside it, i.e. Shenzhen); sea is a synthetic shelf from -2 m at the shore to about -10 m, not surveyed bathymetry. Low land is clamped to +0.6 m.",
         "Minimum road widths (3.2 m / 8 m) are cut out of building footprints, so dense blocks lose a strip along the carriageway.",
         "HLOD meshes are not built by this script. The Unreal baker assigns an HLOD layer; generating proxies is a separate editor command.",
         "This environment did not launch Unreal Editor, so the bake, character, cars, helicopter and frame rate were not played.",
@@ -1300,6 +1453,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "seconds": round(time.perf_counter() - started, 1),
         "extent": extent,
         "long_axis_m": long_axis,
+        "coast": built.get("coast"),
         "harbour_game_width_m": {
             "sections": len(widths),
             "min": min_harbour,
@@ -1319,21 +1473,35 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "previews": built["previews"],
         "data": {
             "osm": "data/raw/hong-kong-latest.osm.pbf from https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf",
+            "coastline": "OSM natural=coastline from the same extract; extract polygon data/config/hong-kong.poly from https://download.geofabrik.de/asia/china/hong-kong.poly",
             "dem": "SRTM N22E113 and N22E114 from https://elevation-tiles-prod.s3.amazonaws.com/skadi/N22/",
             "lands_dtm": "not downloaded; https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5-digital-terrain-model",
         },
         "limitations": limitations,
     }
     axis_ok = config["target_long_axis_min_m"] <= long_axis <= config["target_long_axis_max_m"]
-    harbour_ok = min_harbour is not None and min_harbour >= float(config["min_harbour_width_m"])
+    clearance = ((built.get("coast") or {}).get("harbour_clearance") or {}).get("min_m")
+    harbour_ok = (
+        min_harbour is not None
+        and min_harbour >= float(config["min_harbour_width_m"])
+        and clearance is not None
+        and clearance >= float(config["min_harbour_width_m"])
+    )
     native_ok = bool(native.get("ok"))
     content_ok = built["counts"]["roads"] > 0 and built["counts"]["buildings"] > 0 and built["counts"]["tiles"] > 0
-    report["ok"] = bool(axis_ok and harbour_ok and native_ok and content_ok)
+    coast = built.get("coast") or {}
+    coast_ok = (
+        coast.get("sea_below_seabed_pct", 0.0) >= 99.0
+        and coast.get("land_above_0_pct", 0.0) >= 99.0
+        and not coast.get("spawns_over_sea")
+    )
+    report["ok"] = bool(axis_ok and harbour_ok and native_ok and content_ok and coast_ok)
     report["checks"] = {
         "long_axis": axis_ok,
         "harbour": harbour_ok,
         "native_warp": native_ok,
         "content": content_ok,
+        "coast": coast_ok,
     }
     (out / "logs" / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     log(
