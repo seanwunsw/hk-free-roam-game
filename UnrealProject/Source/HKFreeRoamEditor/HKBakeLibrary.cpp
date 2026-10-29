@@ -45,6 +45,7 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "MeshDescription.h"
 #include "Misc/FileHelper.h"
+#include "StaticMeshCompiler.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "PhysicsEngine/SkeletalBodySetup.h"
@@ -389,6 +390,9 @@ UStaticMesh* BuildMesh(
 		Mesh->GetStaticMaterials().Add(FStaticMaterial(Material, Slot));
 	}
 	Mesh->PostEditChange();
+	// PostEditChange rebuilds asynchronously. Saving before it finishes serialises NaN bounds and
+	// SavePackage fails, so every re-baked tile logged "Could not save".
+	FStaticMeshCompilingManager::Get().FinishCompilation({ Mesh });
 	FAssetRegistryModule::AssetCreated(Mesh);
 	if (!SaveAsset(Mesh))
 	{
