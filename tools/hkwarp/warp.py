@@ -3,12 +3,16 @@
 The map is a global diffeomorphism on the plane:
 
     X = G(x)
-    Y = H(y) + A(x) * tanh((y - yc(x)) / W) - A(x) * tanh((0 - yc(x)) / W)
+    Y = H(y) + A * tanh((y - yc(x)) / W)
+
+H carries one constant so the origin maps to (0, 0). A is the same for every x,
+so land far from the harbour moves by exactly +A (north) or -A (south) and is
+never sheared; yc is a smoothed centreline.
 
 G and H are integrals of positive scale profiles, so X increases with x and, for
 each fixed x, Y increases with y. The Jacobian is therefore G'(x) * dY/dy > 0
-and the warp cannot fold. A(x) * tanh widens Victoria Harbour without creating
-seams: A and yc are smooth.
+and the warp cannot fold. A * tanh widens Victoria Harbour without creating
+seams: yc is smooth.
 
 Game axes: +X east, +Y north, metres. Unreal is left-handed, so north is -Y there:
 unreal_cm = (east * 100, -north * 100, up * 100). UnrealProject/Source/HKFreeRoam/HKAxes.h
@@ -29,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 MAGIC = b"HKWARP01"
-BIN_VERSION = 1
+BIN_VERSION = 2
 
 
 def repo_root() -> Path:
@@ -162,7 +166,8 @@ class WarpModel:
         yc = self._lerp(self.x0, self.x_step, self.YC, x)
         w = self.harbour_w
         gx = self._lerp(self.x0, self.x_step, self.G, x)
-        gy = hv + av * np.tanh((y - yc) / w) - av * np.tanh((0.0 - yc) / w)
+        # H already carries the constant that pins the origin, so the far-field shift is +-A everywhere.
+        gy = hv + av * np.tanh((y - yc) / w)
         return gx, gy
 
     def axis_scales(self, x, y):
@@ -323,23 +328,27 @@ def build_warp(config: dict | None = None) -> WarpModel:
     g = _integrate_scale(x0, step, np.asarray(sx, dtype=np.float64))
     h = _integrate_scale(y0, step, np.asarray(sy, dtype=np.float64))
 
-    centre = np.asarray(config["harbour_centerline_lonlat"], dtype=np.float64)
-    cx = (centre[:, 0] - config["origin_lon"]) * m_lon
-    cy = (centre[:, 1] - config["origin_lat"]) * m_lat
-    order = np.argsort(cx)
-    cx, cy = cx[order], cy[order]
-    # Drop duplicated eastings so np.interp is well defined.
-    keep = np.concatenate([[True], np.diff(cx) > 1.0])
-    cx, cy = cx[keep], cy[keep]
-    left, right = float(cx[0]), float(cx[-1])
-    fade = float(config["harbour_fade_m"])
+    # yc may follow a longer, smoothed line than the measured harbour so the band leaves the map over water.
+    yc_line = np.asarray(config.get("harbour_yc_lonlat") or config["harbour_centerline_lonlat"], dtype=np.float64)
+    ycx = (yc_line[:, 0] - config["origin_lon"]) * m_lon
+    ycy = (yc_line[:, 1] - config["origin_lat"]) * m_lat
+    order = np.argsort(ycx)
+    ycx, ycy = ycx[order], ycy[order]
+    keep = np.concatenate([[True], np.diff(ycx) > 1.0])
+    yc = np.interp(xs, ycx[keep], ycy[keep])
+    sigma = float(config.get("harbour_yc_smooth_m", 0.0))
+    if sigma > 0.0:
+        radius = int(np.ceil(3.0 * sigma / step))
+        kernel = np.exp(-0.5 * (np.arange(-radius, radius + 1) * step / sigma) ** 2)
+        kernel /= kernel.sum()
+        yc = np.convolve(np.pad(yc, radius, mode="edge"), kernel, mode="valid")
+    # Uniform amplitude: a shift that varied with x sheared everything north and south of the harbour.
     amp = float(config["harbour_amplitude_m"])
-    t_left = _smoothstep(left - fade, left, xs)
-    t_right = 1.0 - _smoothstep(right, right + fade, xs)
-    inside = (xs >= left) & (xs <= right)
-    window = np.where(inside, 1.0, np.where(xs < left, t_left, t_right))
-    a = amp * window
-    yc = np.interp(xs, cx, cy)
+    w = float(config["harbour_tanh_width_m"])
+    a = np.full_like(xs, amp)
+    # Pin the origin to (0, 0) with one constant folded into H; a constant cannot shear.
+    yc0 = float(np.interp(0.0, xs, yc))
+    h = h - amp * np.tanh((0.0 - yc0) / w)
 
     return WarpModel(
         origin_lon=float(config["origin_lon"]),

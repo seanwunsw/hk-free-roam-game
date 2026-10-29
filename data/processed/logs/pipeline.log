@@ -1,62 +1,62 @@
-20:47:33 wrote warp lut and golden samples
-20:47:34 osm scan 500000  buildings 0  roads 0  water 0
-20:47:34 osm scan 1000000  buildings 0  roads 0  water 0
-20:47:35 osm scan 1500000  buildings 0  roads 0  water 0
-20:47:35 osm scan 2000000  buildings 0  roads 0  water 0
-20:47:36 osm scan 2500000  buildings 0  roads 0  water 0
-20:47:36 osm scan 3000000  buildings 0  roads 0  water 0
-20:47:37 osm scan 3500000  buildings 0  roads 0  water 0
-20:47:40 osm scan 4000000  buildings 88643  roads 30929  water 2710
-20:47:41 osm done records 4152379  buildings 119432  roads 35961  water 2866  coast 1608
-20:47:41 projecting buildings
-20:47:43 building centroids to scale 106703
-20:47:54 buildings inside map 106201  dropped small 502
-20:47:54 merged 28991 small buildings -> 77210 footprints
-20:48:05 overlap cull dropped 3262  remaining 73948
-20:48:05 terrain grid 3025 x 2773  spacing 7.98 x 8.06 m
-20:48:05 inverse warp columns 200/3025
-20:48:05 inverse warp columns 1000/3025
-20:48:06 inverse warp columns 1800/3025
-20:48:06 inverse warp columns 2600/3025
-20:48:06 sampled elevation rows 160/2773
-20:48:06 sampled elevation rows 800/2773
-20:48:06 sampled elevation rows 1440/2773
-20:48:06 sampled elevation rows 2080/2773
-20:48:06 sampled elevation rows 2720/2773
-20:48:07 sea cells 3695841 pushed to <= -2.0 m
-20:48:07 preparing 35961 roads
-20:49:24 roads kept 35961  bridges 4030  open-cut tunnels 155
-20:49:32 merge_parallel: 35961 ways -> 21767 pieces  absorbed points 139088/485156  widened pieces 8573
-20:49:33 ground stretches decked over tunnel trenches 286
-20:49:33 carving tunnels 147 then ground roads 18857
-20:49:37 ground corridor nodes 453586
-20:49:40 road ribbons 21886  triangles 1735246
-20:49:40 outlining 19004 drivable ribbons
-20:49:41 road overlap query 3000/73948
-20:49:42 road overlap query 18000/73948
-20:49:42 road overlap query 33000/73948
-20:49:42 road overlap query 48000/73948
-20:49:42 road overlap query 63000/73948
-20:49:42 buildings overlapping roads 21891
-20:49:45 cut 17870 footprints  removed 4021  remaining 69927
-20:49:47 buildings on land 69106  dropped in water 821
-20:49:47 projecting water 2866
-20:49:47 inland water polygons 868
-20:49:50 wrote tiles 400/2462
-20:49:51 wrote tiles 800/2462
-20:49:54 wrote tiles 1200/2462
-20:49:58 wrote tiles 1600/2462
-20:50:00 wrote tiles 2000/2462
-20:50:01 wrote tiles 2400/2462
-20:50:01 tile files referenced 2462  triangles 3021399
-20:50:03 spawns player TuenMun  cars 26  helipads 5
-20:50:03 spawn note: Lamma has no clear ground road within 450 m
-20:50:03 spawn note: CentralHelipad helipad snapped from water/slope to flat land
-20:50:03 spawn note: KaiTakHelipad helipad snapped from water/slope to flat land
-20:50:03 spawn note: TSTHelipad helipad snapped from water/slope to flat land
-20:50:03 spawn note: ShaTinHelipad helipad snapped from water/slope to flat land
-20:50:03 spawn note: LantauHelipad helipad snapped from water/slope to flat land
-20:50:08 previews scale_field.png, harbour_width.png, relief.png, network.png
-20:50:08 heightmap 3025 x 2773  16776650 bytes
-20:50:08 native warp check skipped: g++ is not installed
-20:50:08 report ok=False long_axis=23420 harbour_min=1519.821444853204 tiles=2462 tris=3021399
+22:25:07 wrote warp lut and golden samples
+22:25:08 osm scan 500000  buildings 0  roads 0  water 0
+22:25:08 osm scan 1000000  buildings 0  roads 0  water 0
+22:25:09 osm scan 1500000  buildings 0  roads 0  water 0
+22:25:09 osm scan 2000000  buildings 0  roads 0  water 0
+22:25:10 osm scan 2500000  buildings 0  roads 0  water 0
+22:25:10 osm scan 3000000  buildings 0  roads 0  water 0
+22:25:11 osm scan 3500000  buildings 0  roads 0  water 0
+22:25:14 osm scan 4000000  buildings 88643  roads 30929  water 2710
+22:25:15 osm done records 4152379  buildings 119432  roads 35961  water 2866  coast 1608
+22:25:15 projecting buildings
+22:25:17 building centroids to scale 106692
+22:25:28 buildings inside map 106526  dropped small 166
+22:25:28 merged 29989 small buildings -> 76537 footprints
+22:25:39 overlap cull dropped 2476  remaining 74061
+22:25:39 terrain grid 3025 x 2458  spacing 7.98 x 7.96 m
+22:25:39 inverse warp columns 200/3025
+22:25:39 inverse warp columns 1000/3025
+22:25:39 inverse warp columns 1800/3025
+22:25:39 inverse warp columns 2600/3025
+22:25:39 sampled elevation rows 160/2458
+22:25:39 sampled elevation rows 800/2458
+22:25:39 sampled elevation rows 1440/2458
+22:25:40 sampled elevation rows 2080/2458
+22:25:40 sea cells 3325996 pushed to <= -2.0 m
+22:25:40 preparing 35961 roads
+22:26:52 roads kept 35961  bridges 4030  open-cut tunnels 155
+22:26:59 merge_parallel: 35961 ways -> 22216 pieces  absorbed points 107247/422520  widened pieces 7941
+22:27:00 ground stretches decked over tunnel trenches 242
+22:27:00 carving tunnels 141 then ground roads 19374
+22:27:03 ground corridor nodes 414739
+22:27:06 road ribbons 22336  triangles 1498730
+22:27:07 outlining 19515 drivable ribbons
+22:27:07 road overlap query 3000/74061
+22:27:08 road overlap query 18000/74061
+22:27:08 road overlap query 33000/74061
+22:27:08 road overlap query 48000/74061
+22:27:08 road overlap query 63000/74061
+22:27:08 buildings overlapping roads 18715
+22:27:10 cut 16729 footprints  removed 1986  remaining 72075
+22:27:11 self-intersecting footprints repaired 213  dropped 0
+22:27:13 buildings on land 71238  dropped in water 837
+22:27:13 projecting water 2866
+22:27:13 inland water polygons 854
+22:27:15 wrote tiles 400/2386
+22:27:17 wrote tiles 800/2386
+22:27:20 wrote tiles 1200/2386
+22:27:24 wrote tiles 1600/2386
+22:27:26 wrote tiles 2000/2386
+22:27:27 tile files referenced 2386  triangles 2821324
+22:27:29 spawns player TuenMun  cars 26  helipads 5
+22:27:29 spawn note: Lamma has no clear ground road within 450 m
+22:27:29 spawn note: CentralHelipad helipad snapped from water/slope to flat land
+22:27:29 spawn note: KaiTakHelipad helipad snapped from water/slope to flat land
+22:27:29 spawn note: TSTHelipad helipad snapped from water/slope to flat land
+22:27:29 spawn note: ShaTinHelipad helipad snapped from water/slope to flat land
+22:27:29 spawn note: LantauHelipad helipad snapped from water/slope to flat land
+22:27:34 previews scale_field.png, harbour_width.png, relief.png, network.png
+22:27:34 heightmap 3025 x 2458  14870900 bytes
+22:27:34 forward samples 68 max error m 2.51595e-06
+inverse samples 68 max error deg 6.09077e-11
+22:27:34 report ok=True long_axis=23420 harbour_min=1128.7636583801432 tiles=2386 tris=2821324

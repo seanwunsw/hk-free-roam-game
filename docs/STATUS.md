@@ -246,3 +246,51 @@ Sean 部機 pull `46cd1b5` 之後再 build `HKFreeRoamEditor` Win64 Development�
 - 明挖隧道坑仍然好深；跨坑嘅地面路改咗做橋（286 段）。
 - 海岸線入面大約 0.3 平方公里（以前平滑後高過 1.5 米嘅岸邊格）而家變海；內陸水面由 929 變 868。
 - 南丫島仍然冇車（450 米內冇地面路）。
+
+## 落唔到地 + 小地圖唔似香港（branch `fix/road-pipeline`，2026-10-29）
+
+**全部未喺 UE 測過**：冇編譯、冇烘焙、冇 PIE。下面數字全部嚟自呢部機嘅 Python pipeline 同檢查 script。
+
+### 1. 三角形方向（落唔到地嘅根本原因）
+
+- glTF → UE 個軸換算 `(X, −Z, Y)` 係鏡像，所以每個三角形嘅繞向反轉咗。UE 用 `Cross(P2−P0, P1−P0)` 計面法線，路面 collision 係 ComplexAsSimple 雙面，sweep 嘅 ImpactNormal 係原始面法線，所以路面法線 Z 係負數，低過可行走斜度（Z ≥ 0.643），角色企唔穩、成日喺「跌緊」狀態。
+- `HKBakeLibrary.cpp` `AppendPrim`：而家用 UE 嘅公式計面法線，同 glTF 存落嘅法線對比，相反就調轉 I1/I2。
+- 新加入 import 後檢查：每個 tile mesh 數「面法線 · glTF 法線 ≤ 0」嘅三角形，有就逐個 mesh 出 Warning；烘焙完出一行總數：`HK winding check: N of M tile triangles in K meshes face away from their glTF normals`。正確應該係 **0**。
+- 只有 tile import（建築、路、水）行呢條路。Landscape 係 heightfield；車、直升機、玩家唔經 `AppendPrim`。注意：`BuildChassis` 手砌嘅車身面用 UE 公式計係向下，呢個係舊有，collision 係 None、車用 PhysicsAsset，所以今次冇改。
+
+### 2. Warp v2（小地圖扭曲）
+
+- 舊公式喺維港附近有隨 x 變化嘅 A（fade）同 origin pin，令遠方都有剪切（小地圖見到之字形）。新公式：`Y = H'(y) + A·tanh((y − yc_s(x)) / W)`，A 係常數，遠方只係平移 ±A，冇剪切。`H'` 已經包咗令原點唔郁嘅常數。
+- `yc` 用新嘅 `harbour_yc_lonlat`（向西延長到汲水門／大嶼山東北，向東延長），再做 400 米高斯平滑。
+- 參數：A 700（舊 1100），W 340，`harbour_yc_smooth_m` 400，刪咗 `harbour_fade_m`。比例 knots 冇改。
+- LUT 版本升到 2，`hk_warp.h` 會拒絕舊 v1 檔，所以一定要 `git lfs pull`。
+- 結果：長軸 23420 米，高 18855 米（舊 19655），最細 Jacobian 0.01044，冇摺疊。維港 26 個斷面：最窄 1129 米（鯉魚門），中位 1603，最闊 2614；中環↔尖沙咀 1271 米（舊 1918）。Native warp：正向最大誤差 2.52e-6 米，反向 6.09e-11 度。
+- 代價：A 細咗，維港闊度細咗（但仍然 ≥ 1000 米）。tanh 帶喺穿過陸地嘅位置（大嶼山東北、清水灣）南北方向最多拉長大約 5 倍。
+
+### 3. 自交建築腳印
+
+- 新 warp 之後荃灣 `TsuenWan_0` 架車出現喺建築入面。原因：切路之後嘅腳印抽點會令多邊形自交，三角化後屋頂／牆漏出去路面，但 spawn 嘅點喺多邊形檢查（shapely）判斷唔到。
+- `build_world.py` 加 `repair_rings`：自交嘅腳印用 `make_valid` 取最大嗰塊，再做保留拓撲嘅簡化。今次修咗 213 個，冇刪。
+
+### 檢查（`check_roads.py`，舊數據 → 新數據）
+
+| 指標 | 之前 | 之後 |
+| --- | --- | --- |
+| 路面面積 (m²) | 9,965,322 | 8,901,847 |
+| 重疊 | 8.092% | 7.438% |
+| 間隙 > 0.45 米 | 4.525% | 3.664% |
+| 間隙 0.45–4 米 | 0.837% | 0.801% |
+| 地面路重疊 | 0.0 | 0.0 |
+| 排除 > 4 米，喺台階內 | 97.58% | 97.5% |
+| 地面路喺台階內 | 99.94% | 99.98% |
+| 橋喺台階內 | 3.52% | 3.45% |
+| spawn 頭頂有嘢／喺建築入面／浮空 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+- 玩家 spawn 仍然喺屯門 `TuenMun_0` 旁邊（大約 3 米）。Tile 2386，三角形 2.82M（舊 3.02M）。`pytest tools/tests` 36 項通過。pipeline `ok=True`。
+
+### 未處理／風險
+
+- C++ 未編譯，可能有編譯錯。
+- SRTM 將大部分維港當成陸地（+1 至 +35 米），例如 114.19 一帶可能有一條陸橋連住紅磡同銅鑼灣；小地圖喺港內同海岸見到「低地」色。地形海面 mask 只睇 DEM（≤ 1.5 米），OSM 海岸線只用喺預覽。要另外修。
+- 上次 PIE log 入面 21 個 NaN bounds tile、InverseFast 誤差同 distance field 問題未處理。
+- 車身手砌面方向（見上面）。

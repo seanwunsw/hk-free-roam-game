@@ -1,64 +1,64 @@
 {
-  "ok": false,
-  "seconds": 155.0,
+  "ok": true,
+  "seconds": 147.2,
   "extent": {
     "min_x_m": -12193.275570889611,
     "max_x_m": 11226.224534466013,
-    "min_y_m": -9814.564286827183,
-    "max_y_m": 11814.845379263736,
+    "min_y_m": -8911.090482551426,
+    "max_y_m": 9944.153314679997,
     "width_m": 23419.500105355626,
-    "height_m": 21629.40966609092,
+    "height_m": 18855.243797231422,
     "long_axis_m": 23419.500105355626
   },
   "long_axis_m": 23419.500105355626,
   "harbour_game_width_m": {
     "sections": 26,
-    "min": 1519.821444853204,
-    "median": 2185.7642095905803,
-    "max": 3399.5518894658867
+    "min": 1128.7636583801432,
+    "median": 1602.8006694023493,
+    "max": 2614.279371642393
   },
   "place_scales": [
     {
       "id": "Central",
       "scale_x": 0.5,
-      "scale_y": 0.5626559701223149,
-      "horizontal": 0.5304036058146263
+      "scale_y": 0.537387965219866,
+      "horizontal": 0.5183570030489922
     },
     {
       "id": "WanChai",
       "scale_x": 0.5,
-      "scale_y": 0.5005499077433093,
-      "horizontal": 0.5002748783135674
+      "scale_y": 0.5003386244933478,
+      "horizontal": 0.5001692835897401
     },
     {
       "id": "CausewayBay",
       "scale_x": 0.5,
-      "scale_y": 0.5008442638146351,
-      "horizontal": 0.5004219538622556
+      "scale_y": 0.5005267505818117,
+      "horizontal": 0.5002633059608769
     },
     {
       "id": "TST",
       "scale_x": 0.5,
-      "scale_y": 1.057549572456367,
-      "horizontal": 0.7271690217742939
+      "scale_y": 0.8748191821936386,
+      "horizontal": 0.6613694815281541
     },
     {
       "id": "YauMaTei",
       "scale_x": 0.5,
-      "scale_y": 0.5000214470379557,
-      "horizontal": 0.5000107234039864
+      "scale_y": 0.5000155419665108,
+      "horizontal": 0.5000077709228682
     },
     {
       "id": "MongKok",
       "scale_x": 0.5,
-      "scale_y": 0.5000002622408667,
-      "horizontal": 0.5000001311204162
+      "scale_y": 0.5000002064124976,
+      "horizontal": 0.5000001032062382
     },
     {
       "id": "KaiTak",
       "scale_x": 0.5,
-      "scale_y": 0.5005787660841575,
-      "horizontal": 0.5002892993479661
+      "scale_y": 0.5002769532479194,
+      "horizontal": 0.5001384574534933
     },
     {
       "id": "ShaTin",
@@ -69,26 +69,26 @@
     {
       "id": "TuenMun",
       "scale_x": 0.2966703848771431,
-      "scale_y": 0.5,
-      "horizontal": 0.38514308047603757
+      "scale_y": 0.5000000000000102,
+      "horizontal": 0.3851430804760415
     },
     {
       "id": "Lantau",
       "scale_x": 0.1883889265718608,
-      "scale_y": 0.5,
-      "horizontal": 0.30691116513729244
+      "scale_y": 0.5000000000000241,
+      "horizontal": 0.3069111651372998
     },
     {
       "id": "KwunTong",
       "scale_x": 0.5,
-      "scale_y": 0.5002781455668699,
-      "horizontal": 0.5001390534475737
+      "scale_y": 0.5001716716268874,
+      "horizontal": 0.5000858284469214
     },
     {
       "id": "TseungKwanO",
       "scale_x": 0.5,
-      "scale_y": 0.5000224519003352,
-      "horizontal": 0.5000112258241485
+      "scale_y": 0.5000000001023311,
+      "horizontal": 0.5000000000511655
     },
     {
       "id": "TsuenWan",
@@ -129,8 +129,8 @@
     {
       "id": "Aberdeen",
       "scale_x": 0.5,
-      "scale_y": 0.5000000000017257,
-      "horizontal": 0.5000000000008629
+      "scale_y": 0.5000000000008742,
+      "horizontal": 0.5000000000004371
     },
     {
       "id": "Stanley",
@@ -141,8 +141,8 @@
     {
       "id": "VictoriaPeak",
       "scale_x": 0.5,
-      "scale_y": 0.5000140511306529,
-      "horizontal": 0.5000070255159685
+      "scale_y": 0.5000090396261849,
+      "horizontal": 0.5000045197926639
     },
     {
       "id": "TaiMoShan",
@@ -153,8 +153,8 @@
     {
       "id": "Airport",
       "scale_x": 0.16341222683964587,
-      "scale_y": 0.5,
-      "horizontal": 0.28584281243337734
+      "scale_y": 0.5000000052053983,
+      "horizontal": 0.28584281392130306
     },
     {
       "id": "CheungChau",
@@ -172,24 +172,25 @@
   "counts": {
     "osm_buildings": 119432,
     "osm_roads": 35961,
-    "buildings": 69106,
-    "roads": 21886,
-    "bridges": 2882,
-    "tunnels_open_cut": 147,
-    "water": 868,
-    "tiles": 2462,
-    "triangles": 3021399
+    "buildings": 71238,
+    "roads": 22336,
+    "bridges": 2821,
+    "tunnels_open_cut": 141,
+    "water": 854,
+    "tiles": 2386,
+    "triangles": 2821324
   },
   "landscape": {
     "verts_x": 3025,
-    "verts_y": 2773,
+    "verts_y": 2458,
     "spacing_x_m": 7.976025167114956,
-    "spacing_y_m": 8.055342592384891
+    "spacing_y_m": 7.958992184465373
   },
   "native_warp": {
-    "compiled": false,
-    "ok": false,
-    "stderr": "g++ not found"
+    "compiled": true,
+    "ok": true,
+    "stdout": "forward samples 68 max error m 2.51595e-06\ninverse samples 68 max error deg 6.09077e-11",
+    "stderr": ""
   },
   "spawn_notes": [
     "Lamma has no clear ground road within 450 m",
@@ -223,7 +224,7 @@
   "checks": {
     "long_axis": true,
     "harbour": true,
-    "native_warp": false,
+    "native_warp": true,
     "content": true
   }
 }

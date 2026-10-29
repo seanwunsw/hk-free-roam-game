@@ -90,3 +90,21 @@ def test_unreal_cm_lonlat_roundtrip_and_orientation():
     x_east, _ = warp.lonlat_to_unreal_cm(lon + 0.01, lat)
     assert y_north < y_cm
     assert x_east > x_cm
+
+
+def test_far_field_shift_is_uniform_no_shear():
+    # The old origin-pin term, A(x) * tanh(-yc(x) / W), moved whole districts north or south by up to
+    # ~2 km depending on longitude. North and south of the harbour band every x must now shift equally.
+    warp = build_warp(load_config())
+    xs = np.linspace(-40000, 40000, 81)
+    # yc runs from about -4.4 km (east) to +5.5 km (west), so stay a few W outside that band.
+    for y in (-15000.0, -7000.0, 8000.0, 15000.0):
+        _, gy = warp.real_to_game_m(xs, np.full_like(xs, y))
+        assert np.ptp(gy) < 1.0, (y, float(np.ptp(gy)))
+
+
+def test_central_to_tst_wider_than_minimum():
+    warp = build_warp(load_config())
+    _, south = warp.lonlat_to_game_m(114.168, 22.2870)
+    _, north = warp.lonlat_to_game_m(114.168, 22.2935)
+    assert float(north - south) >= warp.config["min_harbour_width_m"]

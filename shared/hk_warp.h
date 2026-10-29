@@ -69,7 +69,8 @@ inline void HKWarpRealToGame(const HKWarpLUT& Lut, double X, double Y, double& O
 	const double YC = HKWarpLerp(Lut.X0, Lut.XStep, Lut.YC, X);
 	const double W = (Lut.HarbourW > 1e-6) ? Lut.HarbourW : 1.0;
 	OutGameX = HKWarpLerp(Lut.X0, Lut.XStep, Lut.G, X);
-	OutGameY = HV + AV * std::tanh((Y - YC) / W) - AV * std::tanh((0.0 - YC) / W);
+	// Version 2 LUT: H already holds the origin constant, so the shift is a uniform +-A (no shear).
+	OutGameY = HV + AV * std::tanh((Y - YC) / W);
 }
 
 inline void HKWarpLonLatToGameM(const HKWarpLUT& Lut, double Lon, double Lat, double& OutGameX, double& OutGameY)
@@ -182,7 +183,7 @@ inline bool HKWarpLoadFile(const char* Path, HKWarpLUT& OutLut, std::string& Out
 		return false;
 	}
 	std::uint32_t Version = 0;
-	if (!HKWarpReadExact(File, &Version, 4, OutError) || Version != 1u)
+	if (!HKWarpReadExact(File, &Version, 4, OutError) || Version != 2u)
 	{
 		std::fclose(File);
 		if (OutError.empty())

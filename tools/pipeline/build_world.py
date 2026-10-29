@@ -716,6 +716,38 @@ def cut_buildings(buildings: list[dict], buffers, tree, log: Log) -> list[dict]:
     return kept
 
 
+def repair_rings(buildings: list[dict], log: Log) -> list[dict]:
+    """Decimated footprints can cross themselves; their triangulated roofs and walls
+    then spill over roads while point-in-polygon spawn checks miss them. Replace each
+    self-intersecting ring with its largest valid part, or drop it."""
+    import shapely
+
+    kept = []
+    fixed = dropped = 0
+    for building in buildings:
+        poly = shapely.polygons(np.asarray(building["ring"], dtype=np.float64))
+        if poly.is_valid:
+            kept.append(building)
+            continue
+        ring = largest_ring(shapely.make_valid(poly))
+        if ring is not None:
+            ring = largest_ring(shapely.simplify(shapely.polygons(ring), 0.3, preserve_topology=True))
+        if ring is not None:
+            ring = ensure_ccw(clean_ring(ring, 0.15))
+        if ring is None or len(ring) < 3 or abs(signed_area(ring)) < 6.0 or not shapely.polygons(ring).is_valid:
+            dropped += 1
+            continue
+        building = dict(building)
+        building["ring"] = ring
+        building["area"] = abs(signed_area(ring))
+        building["cx"] = float(ring[:, 0].mean())
+        building["cy"] = float(ring[:, 1].mean())
+        kept.append(building)
+        fixed += 1
+    log(f"self-intersecting footprints repaired {fixed}  dropped {dropped}")
+    return kept
+
+
 def assign_building_z(buildings: list[dict], surface_at, log: Log) -> list[dict]:
     """Base each building on the lowest landscape point under its footprint so no
     wall floats on a slope; keep the roof where the centroid rule put it."""
@@ -1159,6 +1191,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     log(f"road ribbons {len(ribbons)}  triangles {sum(len(r['tris']) for r in ribbons)}")
     buffers, tree = _road_buffers(roads, log)
     buildings = cut_buildings(buildings, buffers, tree, log)
+    buildings = repair_rings(buildings, log)
     buildings = assign_building_z(buildings, surface_at, log)
     waters = prepare_water(warp, extracted, height, landscape, log)
     del buffers, tree
