@@ -19,7 +19,7 @@ TODO. Fill this in from the median of three standalone runs after the first laun
 
 ## What this branch changes
 
-The branch is based on `fix/road-collision` (`4118cbf`). That branch already targets D3D12 Shader Model 6 (`-D3D12TargetedShaderFormats=PCD3D_SM5`, `+D3D12TargetedShaderFormats=PCD3D_SM6`), makes road tiles non-Nanite, and calls `ResetLoaders` before saving a tile. This branch does not edit those lines or that bake code.
+The branch is based on `fix/road-collision` (`6fd9bbe`). That branch already targets D3D12 Shader Model 6 (`-D3D12TargetedShaderFormats=PCD3D_SM5`, `+D3D12TargetedShaderFormats=PCD3D_SM6`), makes road tiles non-Nanite, and fully loads an existing package in `ReplaceObject` before saving a re-baked tile. This branch does not edit those lines or that bake code.
 
 `HardwareTargeting` stays `Maximum`. `AppliedDefaultGraphicsPerformance` already matches, so the editor does not stamp Epic again. Gameplay quality is applied in `BeginPlay`.
 
