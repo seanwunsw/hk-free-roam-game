@@ -30,20 +30,20 @@ from tools.pipeline.dem import load_srtm, sample_srtm
 from tools.pipeline.geometry import (
     ROAD_CLASSES,
     MeshAccum,
-    _left_normals,
     append_extrusion,
-    append_ribbon,
     clean_ring,
-    clip_polyline_rect,
     douglas_peucker,
     ensure_ccw,
     point_in_ring,
-    road_game_width,
     signed_area,
 )
 from tools.pipeline.glbutil import write_glb
+from tools.pipeline import roads as roadnet
+from tools.pipeline import spawns as spawn_rules
+from tools.pipeline.surface import quantize_r16, sample_ue
 
 ROAD_CLASS_SET = set(ROAD_CLASSES)
+SEABED_DROP_M = 2.0
 HEIGHT_BY_KIND = {
     "house": 8.5,
     "detached": 9.0,
@@ -171,42 +171,6 @@ def _layer_value(tags) -> int:
         return 0
 
 
-def resample_xy(xy: np.ndarray, step: float) -> np.ndarray:
-    if len(xy) < 2:
-        return xy
-    delta = np.hypot(np.diff(xy[:, 0]), np.diff(xy[:, 1]))
-    total = float(delta.sum())
-    if total < step:
-        return np.vstack([xy[0], xy[-1]])
-    cum = np.concatenate([[0.0], np.cumsum(delta)])
-    targets = np.arange(0.0, cum[-1], step)
-    if cum[-1] - targets[-1] > 0.25:
-        targets = np.append(targets, cum[-1])
-    return np.column_stack([np.interp(targets, cum, xy[:, 0]), np.interp(targets, cum, xy[:, 1])])
-
-
-def limit_grade(z: np.ndarray, xy: np.ndarray, grade: float = 0.18) -> np.ndarray:
-    if len(z) < 2:
-        return z
-    step = np.maximum(np.hypot(np.diff(xy[:, 0]), np.diff(xy[:, 1])), 0.5)
-    out = np.array(z, dtype=np.float64, copy=True)
-    for index in range(1, len(out)):
-        cap = grade * step[index - 1]
-        delta = out[index] - out[index - 1]
-        if delta > cap:
-            out[index] = out[index - 1] + cap
-        elif delta < -cap:
-            out[index] = out[index - 1] - cap
-    for index in range(len(out) - 2, -1, -1):
-        cap = grade * step[index]
-        delta = out[index] - out[index + 1]
-        if delta > cap:
-            out[index] = out[index + 1] + cap
-        elif delta < -cap:
-            out[index] = out[index + 1] - cap
-    return out
-
-
 def encode_height(z_m: np.ndarray) -> np.ndarray:
     """UE landscape: z_cm = (h16 - 32768) * ScaleZ / 128, ScaleZ = 512 -> 4 cm per unit."""
     units = np.asarray(z_m, dtype=np.float64) / 0.04 + 32768.0
@@ -328,6 +292,7 @@ def extract_osm(path: Path, log: Log) -> dict:
                             "lanes": lanes,
                             "tunnel": tunnel and not bridge,
                             "bridge": bridge and not tunnel,
+                            "layer": layer,
                         }
                     )
                 elif tags.get("natural") == "coastline":
@@ -598,6 +563,7 @@ def build_terrain(warp, grids, landscape, log: Log) -> np.ndarray:
     log(f"terrain grid {nx} x {ny}  spacing {landscape['spacing_x']:.2f} x {landscape['spacing_y']:.2f} m")
     x_real, y_real = _invert_columns(warp, xs, ys, log)
     height = np.empty((ny, nx), dtype=np.float32)
+    seabed = np.full((ny, nx), np.inf, dtype=np.float32)
     rows = 160
     for start in range(0, ny, rows):
         end = min(ny, start + rows)
@@ -613,11 +579,16 @@ def build_terrain(warp, grids, landscape, log: Log) -> np.ndarray:
         height_scale = np.clip(np.sqrt(horizontal), 0.20, 1.25).astype(np.float32)
         sea = elev <= 1.5
         height[start:end] = np.where(sea, np.minimum(elev, 0.0) * 0.35, elev * height_scale)
+        seabed[start:end] = np.where(sea, np.minimum(elev, 0.0) * 0.35 - SEABED_DROP_M, np.inf)
         if start % 640 == 0:
             log(f"sampled elevation rows {end}/{ny}")
     from scipy.ndimage import gaussian_filter
 
     height = gaussian_filter(height, sigma=0.7).astype(np.float32)
+    # Keep open water at least SEABED_DROP_M under the sea plane so the
+    # landscape cannot poke through the water surface or show as wet sand.
+    height = np.minimum(height, seabed).astype(np.float32)
+    log(f"sea cells {int(np.isfinite(seabed).sum())} pushed to <= -{SEABED_DROP_M} m")
     return height
 
 
@@ -640,14 +611,13 @@ def bilinear(grid: np.ndarray, xs, ys, landscape) -> np.ndarray:
 def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
     log(f"preparing {len(extracted['roads'])} roads")
     prepared = []
-    real_lengths = []
     for road in extracted["roads"]:
         ll = road["ll"]
         gx, gy = warp.lonlat_to_game_m(ll[:, 0], ll[:, 1])
         xy = np.column_stack([gx, gy])
         if len(xy) > 8:
             xy = douglas_peucker(xy, 2.5)
-        xy = resample_xy(xy, 8.0)
+        xy = roadnet.resample(xy, roadnet.STEP_M)
         if len(xy) < 2:
             continue
         min_xy = xy.min(axis=0)
@@ -658,8 +628,6 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
             continue
         rx, ry = warp.game_to_real_m(float(xy[len(xy) // 2, 0]), float(xy[len(xy) // 2, 1]))
         horizontal = float(warp.horizontal_scale(rx, ry))
-        height_scale = float(np.clip(math.sqrt(max(horizontal, 1e-4)), 0.20, 1.25))
-        width, lanes = road_game_width(road["highway"], road["lanes"], horizontal)
         terrain_z = np.asarray(bilinear(height, xy[:, 0], xy[:, 1], landscape), dtype=np.float64)
         real_step = np.hypot(np.diff(ll[:, 0]) * warp.m_per_deg_lon, np.diff(ll[:, 1]) * warp.m_per_deg_lat)
         real_length = float(real_step.sum())
@@ -668,125 +636,23 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
             mode = "tunnel"
         elif road["bridge"]:
             mode = "bridge"
-        if mode == "bridge":
-            clearance = max(6.0, 9.0 * height_scale)
-            span = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(xy[:, 0]), np.diff(xy[:, 1])))])
-            total = float(span[-1]) or 1.0
-            fade_m = min(40.0, total / 3.0)
-            end_dist = np.minimum(span, total - span)
-            fade = np.clip(end_dist / max(fade_m, 1.0), 0.0, 1.0)
-            z = terrain_z + 0.16 + clearance * fade
-        elif mode == "tunnel":
-            span = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(xy[:, 0]), np.diff(xy[:, 1])))])
-            total = float(span[-1]) or 1.0
-            z = terrain_z[0] + (terrain_z[-1] - terrain_z[0]) * (span / total)
-            z = np.maximum(z, 0.40) + 0.16
-        else:
-            # A ground way sampled over bathymetry is lifted onto the water plane
-            # so a missing bridge tag cannot drop the carriageway under the sea.
-            z = np.maximum(terrain_z, 0.25) + 0.16
-        z = limit_grade(z, xy, 0.18)
-        if mode == "tunnel":
-            z = np.maximum(z, 0.56)
-        center = np.column_stack([xy[:, 0], xy[:, 1], z])
-        prepared.append(
-            {
-                "center": center,
-                "width": width,
-                "lanes": lanes,
-                "highway": road["highway"],
-                "mode": mode,
-                "horizontal": horizontal,
-            }
-        )
-        real_lengths.append(real_length)
+        prepared.append(roadnet.make_road(xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal))
     tunnels = sum(1 for road in prepared if road["mode"] == "tunnel")
     bridges = sum(1 for road in prepared if road["mode"] == "bridge")
     log(f"roads kept {len(prepared)}  bridges {bridges}  open-cut tunnels {tunnels}")
     return prepared
 
 
-def carve_terrain(height: np.ndarray, roads: list[dict], landscape, log: Log) -> np.ndarray:
-    from scipy.ndimage import distance_transform_edt
-
-    carved = height.copy()
-    spacing = 0.5 * (landscape["spacing_x"] + landscape["spacing_y"])
-
-    def paint(group: list[dict], flat_extra: float, shoulder: float) -> None:
-        if not group:
-            return
-        ny, nx = carved.shape
-        # Lowest road in a shared cell wins so a surface street is not buried under a higher one.
-        seeds = np.full(ny * nx, 1.0e9, dtype=np.float32)
-        chunks_x = []
-        chunks_y = []
-        chunks_z = []
-        for road in group:
-            center = road["center"]
-            half = road["width"] * 0.5
-            xy = center[:, :2]
-            normals = _left_normals(xy)
-            bands = [xy]
-            if flat_extra > 0.0:
-                bands.append(xy + normals * (half * 0.85))
-                bands.append(xy - normals * (half * 0.85))
-            for band in bands:
-                chunks_x.append(band[:, 0])
-                chunks_y.append(band[:, 1])
-                chunks_z.append(center[:, 2] - 0.20)
-        xs = np.concatenate(chunks_x)
-        ys = np.concatenate(chunks_y)
-        zs = np.concatenate(chunks_z).astype(np.float32)
-        ix = np.clip(np.rint((xs - landscape["min_x"]) / landscape["spacing_x"]).astype(np.int32), 0, nx - 1)
-        iy = np.clip(np.rint((ys - landscape["min_y"]) / landscape["spacing_y"]).astype(np.int32), 0, ny - 1)
-        np.minimum.at(seeds, iy * nx + ix, zs)
-        mask = seeds < 1.0e8
-        if not np.any(mask):
-            return
-        dist, indices = distance_transform_edt(~mask.reshape(ny, nx), return_indices=True)
-        dist_m = dist * spacing
-        target = seeds.reshape(ny, nx)[indices[0], indices[1]]
-        # flat_extra is an extra flat radius beyond a nominal 4 m, plus the shoulder blend.
-        flat_m = 4.0 + flat_extra
-        outer = flat_m + shoulder
-        use = dist_m <= outer
-        blend = np.clip((dist_m - flat_m) / max(shoulder, 0.1), 0.0, 1.0)
-        blend = blend * blend * (3.0 - 2.0 * blend)
-        carved[use] = target[use] * (1.0 - blend[use]) + carved[use] * blend[use]
-
-    tunnels = [road for road in roads if road["mode"] == "tunnel"]
-    ground = [road for road in roads if road["mode"] == "ground"]
-    log(f"carving tunnels {len(tunnels)} then ground roads {len(ground)}")
-    paint(tunnels, 10.0, 28.0)
-    paint(ground, 4.0, 16.0)
-    return carved.astype(np.float32)
-
-
 def _road_buffers(roads: list[dict], log: Log):
+    """Drivable ribbon outlines (with their merged widths) plus 1.5 m, for cutting buildings."""
     import shapely
 
-    lines = []
-    distances = []
-    for road in roads:
-        if road["mode"] == "bridge":
-            continue
-        xy = road["center"][:, :2]
-        if len(xy) < 2:
-            continue
-        lines.append(shapely.linestrings(xy))
-        distances.append(road["width"] * 0.5 + 1.5)
-    if not lines:
+    rings = roadnet.edge_polygons(roads, 1.5)
+    if not rings:
         return [], None
-    log(f"buffering {len(lines)} drivable centrelines")
-    buffers = []
-    for start in range(0, len(lines), 2500):
-        chunk = np.asarray(lines[start : start + 2500], dtype=object)
-        dist = np.asarray(distances[start : start + 2500], dtype=np.float64)
-        buffered = shapely.buffer(chunk, dist, cap_style="flat", join_style="mitre", mitre_limit=2.0, quad_segs=2)
-        for geom in buffered:
-            if geom is not None and not geom.is_empty:
-                buffers.append(geom)
-        log(f"buffered {min(start + 2500, len(lines))}/{len(lines)}")
+    log(f"outlining {len(rings)} drivable ribbons")
+    polys = shapely.make_valid(np.asarray([shapely.polygons(ring) for ring in rings], dtype=object))
+    buffers = [geom for geom in polys if geom is not None and not geom.is_empty]
     tree = shapely.STRtree(buffers)
     return buffers, tree
 
@@ -850,23 +716,31 @@ def cut_buildings(buildings: list[dict], buffers, tree, log: Log) -> list[dict]:
     return kept
 
 
-def assign_building_z(buildings: list[dict], height: np.ndarray, landscape, log: Log) -> list[dict]:
+def assign_building_z(buildings: list[dict], surface_at, log: Log) -> list[dict]:
+    """Base each building on the lowest landscape point under its footprint so no
+    wall floats on a slope; keep the roof where the centroid rule put it."""
     if not buildings:
         return []
-    xs = np.array([building["cx"] for building in buildings])
-    ys = np.array([building["cy"] for building in buildings])
-    zs = np.asarray(bilinear(height, xs, ys, landscape), dtype=np.float64)
     kept = []
-    for building, z in zip(buildings, zs):
-        z = float(z)
-        if z < -0.5:
+    dropped = 0
+    for building in buildings:
+        ring = np.asarray(building["ring"], dtype=np.float64)
+        xs = np.append(ring[:, 0], building["cx"])
+        ys = np.append(ring[:, 1], building["cy"])
+        zs = surface_at(xs, ys)
+        centre = float(zs[-1])
+        # Open water sits SEABED_DROP_M lower than it used to, so this is the
+        # old "centre below -0.5 m" rule shifted by the same amount.
+        if centre < -0.5 - SEABED_DROP_M:
+            dropped += 1
             continue
-        if z < 0.2:
-            z = 0.2
+        top = max(centre, 0.2) + float(building["height"])
+        base = max(float(zs.min()), -3.0)
         building = dict(building)
-        building["z"] = z
+        building["z"] = base
+        building["height"] = top - base
         kept.append(building)
-    log(f"buildings on land {len(kept)}")
+    log(f"buildings on land {len(kept)}  dropped in water {dropped}")
     return kept
 
 
@@ -905,30 +779,69 @@ def _tile_index(x: float, y: float, landscape, tile: float) -> tuple[int, int]:
     return max(0, min(max_ix, ix)), max(0, min(max_iy, iy))
 
 
+def _road_tile_prims(ribbons: list[dict], landscape, tile: float) -> dict:
+    """Split the world-space ribbons into one road primitive per tile by triangle centroid."""
+    if not ribbons:
+        return {}
+    verts, uvs, alphas, tris = [], [], [], []
+    base = 0
+    for rib in ribbons:
+        verts.append(rib["verts"])
+        uvs.append(rib["uv"])
+        alphas.append(np.full(len(rib["verts"]), rib["alpha"]))
+        tris.append(rib["tris"] + base)
+        base += len(rib["verts"])
+    verts = np.concatenate(verts)
+    uvs = np.concatenate(uvs)
+    alphas = np.concatenate(alphas)
+    tris = np.concatenate(tris)
+    centroid = verts[tris].mean(axis=1)
+    max_ix = max(0, int(math.floor((landscape["max_x"] - landscape["min_x"] - 1e-3) / tile)))
+    max_iy = max(0, int(math.floor((landscape["max_y"] - landscape["min_y"] - 1e-3) / tile)))
+    tix = np.clip(np.floor((centroid[:, 0] - landscape["min_x"]) / tile).astype(np.int64), 0, max_ix)
+    tiy = np.clip(np.floor((centroid[:, 1] - landscape["min_y"]) / tile).astype(np.int64), 0, max_iy)
+    key = tix * 100000 + tiy
+    order = np.argsort(key, kind="stable")
+    key_sorted = key[order]
+    starts = np.flatnonzero(np.r_[True, key_sorted[1:] != key_sorted[:-1]])
+    ends = np.r_[starts[1:], len(order)]
+    out = {}
+    for start, end in zip(starts, ends):
+        ix, iy = int(key_sorted[start] // 100000), int(key_sorted[start] % 100000)
+        ox = landscape["min_x"] + ix * tile
+        oy = landscape["min_y"] + iy * tile
+        tile_tris = tris[order[start:end]]
+        used, local = np.unique(tile_tris, return_inverse=True)
+        local = local.reshape(-1, 3)
+        v = verts[used]
+        gl = np.column_stack([v[:, 0] - ox, v[:, 2], v[:, 1] - oy])
+        color = np.empty((len(used), 4), dtype=np.float32)
+        color[:, :3] = (0.85, 0.85, 0.82)
+        color[:, 3] = alphas[used]
+        out[(ix, iy)] = {
+            "positions": gl.astype(np.float32),
+            "normals": roadnet.vertex_normals_gltf(gl, local).astype(np.float32),
+            "uvs": uvs[used].astype(np.float32),
+            "colors": color,
+            "indices": local.reshape(-1).astype(np.uint32),
+            "material": 1,
+        }
+    return out
+
+
 def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, tile: float, log: Log) -> dict:
-    road_index = defaultdict(list)
-    for road in roads:
-        center = road["center"]
-        min_xy = center[:, :2].min(axis=0)
-        max_xy = center[:, :2].max(axis=0)
-        ix0, iy0 = _tile_index(float(min_xy[0]), float(min_xy[1]), landscape, tile)
-        ix1, iy1 = _tile_index(float(max_xy[0]), float(max_xy[1]), landscape, tile)
-        for ix in range(ix0, ix1 + 1):
-            for iy in range(iy0, iy1 + 1):
-                road_index[(ix, iy)].append(road)
+    road_tiles = _road_tile_prims(roads, landscape, tile)
     water_index = defaultdict(list)
     for water in waters:
         ix, iy = _tile_index(float(water["ring"][:, 0].mean()), float(water["ring"][:, 1].mean()), landscape, tile)
         water_index[(ix, iy)].append(water)
-    keys = set(tiles) | set(road_index) | set(water_index)
+    keys = set(tiles) | set(road_tiles) | set(water_index)
     records = []
     tris = 0
     written = 0
     for index, (ix, iy) in enumerate(sorted(keys)):
       try:
         origin = (landscape["min_x"] + ix * tile, landscape["min_y"] + iy * tile)
-        xmin, ymin = origin[0] - 0.15, origin[1] - 0.15
-        xmax, ymax = origin[0] + tile + 0.15, origin[1] + tile + 0.15
         record = {"ix": ix, "iy": iy, "origin_x_m": origin[0], "origin_y_m": origin[1]}
         buildings = tiles.get((ix, iy), [])
         if buildings:
@@ -951,18 +864,12 @@ def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, ti
                 write_glb(path, prims)
                 record["buildings"] = f"tiles/{path.name}"
                 tris += sum(len(prim["indices"]) // 3 for prim in prims)
-        road_prims = []
-        accum = MeshAccum()
-        for road in road_index.get((ix, iy), []):
-            for piece in clip_polyline_rect(road["center"], xmin, ymin, xmax, ymax):
-                append_ribbon(accum, piece, road["width"], origin)
-        prim = accum.primitive(1)
+        prim = road_tiles.get((ix, iy))
         if prim is not None:
             path = tile_dir / f"r_{ix}_{iy}.glb"
             write_glb(path, [prim])
             record["roads"] = f"tiles/{path.name}"
             tris += len(prim["indices"]) // 3
-            road_prims.append(prim)
         accum = MeshAccum()
         for water in water_index.get((ix, iy), []):
             append_extrusion(
@@ -989,44 +896,6 @@ def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, ti
             log(f"tile {ix},{iy} failed\n" + traceback.format_exc())
     log(f"tile files referenced {written}  triangles {tris}")
     return {"tiles": records, "triangles": tris}
-
-
-def _nearest_road(x: float, y: float, roads: list[dict], grid, cell: float, max_dist: float):
-    cx = int(math.floor(x / cell))
-    cy = int(math.floor(y / cell))
-    reach = int(math.ceil(max_dist / cell))
-    best = None
-    best_d = max_dist * max_dist
-    for ix in range(cx - reach, cx + reach + 1):
-        for iy in range(cy - reach, cy + reach + 1):
-            for road_index, point_index in grid.get((ix, iy), []):
-                point = roads[road_index]["center"][point_index]
-                dist = (point[0] - x) ** 2 + (point[1] - y) ** 2
-                if dist < best_d:
-                    best_d = dist
-                    best = (road_index, point_index, point)
-    return best
-
-
-def _road_grid(roads: list[dict], cell: float):
-    grid = defaultdict(list)
-    for road_index, road in enumerate(roads):
-        center = road["center"]
-        for point_index in range(0, len(center), 2):
-            key = (int(math.floor(center[point_index, 0] / cell)), int(math.floor(center[point_index, 1] / cell)))
-            grid[key].append((road_index, point_index))
-    return grid
-
-
-def _yaw_from_road(road, point_index: int) -> float:
-    center = road["center"]
-    nxt = min(point_index + 1, len(center) - 1)
-    prv = max(point_index - 1, 0)
-    dx = float(center[nxt, 0] - center[prv, 0])
-    dy = float(center[nxt, 1] - center[prv, 1])
-    if abs(dx) + abs(dy) < 1e-4:
-        return 0.0
-    return math.degrees(math.atan2(dy, dx))
 
 
 def _find_pad(x: float, y: float, height: np.ndarray, landscape) -> tuple[float, float, float]:
@@ -1061,90 +930,6 @@ def _find_pad(x: float, y: float, height: np.ndarray, landscape) -> tuple[float,
         return best
     z = float(bilinear(height, x, y, landscape))
     return x, y, max(z, 1.0)
-
-
-def build_spawns(config, warp, height, landscape, roads, log: Log) -> tuple[dict, dict, list]:
-    ground = [road for road in roads if road["mode"] == "ground"]
-    grid = _road_grid(ground, 80.0)
-    places = []
-    cars = []
-    helicopters = []
-    helipads = []
-    player = None
-    notes = []
-    for place in config["places"]:
-        gx, gy = warp.lonlat_to_game_m(place["lon"], place["lat"])
-        gx = float(gx)
-        gy = float(gy)
-        z = float(bilinear(height, gx, gy, landscape))
-        yaw = 0.0
-        kind = place.get("kind")
-        if place.get("helicopter") or kind == "helipad":
-            px, py, pz = _find_pad(gx, gy, height, landscape)
-            if abs(px - gx) + abs(py - gy) > 1.0:
-                notes.append(f"{place['id']} helipad snapped from water/slope to flat land")
-            item = {"id": place["id"], "x_m": px, "y_m": py, "z_m": pz, "yaw_deg": 0.0}
-            helipads.append(item)
-            helicopters.append(dict(item))
-            gx, gy, z = px, py, pz
-        else:
-            found = _nearest_road(gx, gy, ground, grid, 80.0, 450.0)
-            if found is None:
-                notes.append(f"{place['id']} has no ground road within 450 m")
-                if z < 0.4:
-                    z = 0.4
-            else:
-                road_index, point_index, point = found
-                yaw = _yaw_from_road(ground[road_index], point_index)
-                # Stand just off the carriageway so the pawn is not inside a parked car.
-                gx = float(point[0]) + math.sin(math.radians(yaw)) * 5.0
-                gy = float(point[1]) - math.cos(math.radians(yaw)) * 5.0
-                z = float(point[2])
-        record = {
-            "id": place["id"],
-            "name_zh": place.get("name_zh", place["id"]),
-            "kind": kind,
-            "hotkey": place.get("hotkey"),
-            "lon": place["lon"],
-            "lat": place["lat"],
-            "x_m": gx,
-            "y_m": gy,
-            "z_m": z,
-            "yaw_deg": yaw,
-        }
-        places.append(record)
-        if place.get("player_start"):
-            player = {"id": place["id"], "x_m": gx, "y_m": gy, "z_m": z, "yaw_deg": yaw}
-        count = int(place.get("cars") or 0)
-        if count > 0 and kind != "helipad":
-            found = _nearest_road(record["x_m"], record["y_m"], ground, grid, 80.0, 450.0)
-            if found is None:
-                notes.append(f"{place['id']} car skipped, no road")
-            else:
-                road_index, point_index, _point = found
-                center = ground[road_index]["center"]
-                for slot in range(count):
-                    sample = int(np.clip(point_index + slot * 3, 0, len(center) - 1))
-                    point = center[sample]
-                    cars.append(
-                        {
-                            "id": f"{place['id']}_{slot}",
-                            "place": place["id"],
-                            "x_m": float(point[0]),
-                            "y_m": float(point[1]),
-                            "z_m": float(point[2]),
-                            "yaw_deg": _yaw_from_road(ground[road_index], sample),
-                        }
-                    )
-    if player is None and places:
-        player = {key: places[0][key] for key in ("id", "x_m", "y_m", "z_m", "yaw_deg")}
-        notes.append("player start fell back to the first place")
-    log(f"spawns player {player['id'] if player else None}  cars {len(cars)}  helipads {len(helipads)}")
-    for note in notes:
-        log("spawn note: " + note)
-    spawns = {"player": player, "cars": cars, "helicopters": helicopters, "helipads": helipads}
-    landmarks = {"places": places}
-    return spawns, landmarks, notes
 
 
 def _draw_minimap(path: Path, height: np.ndarray, landscape, roads, places) -> dict:
@@ -1347,10 +1132,34 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     grids = load_srtm(root / "data" / "raw")
     height = build_terrain(warp, grids, landscape, log)
     roads = prepare_roads(warp, extracted, height, landscape, log)
-    height = carve_terrain(height, roads, landscape, log)
+    roads = roadnet.merge_parallel(roads, log)
+    roadnet.set_design_profiles(roads)
+    roads = roadnet.bridge_over_trenches(roads, log)
+    height = roadnet.carve_terrain(height, roads, landscape, log)
+    # Everything placed on the ground samples what terrain.r16 will store,
+    # with Unreal's landscape triangulation.
+    stored = quantize_r16(height.astype(np.float64))
+
+    def surface_at(xs, ys):
+        return sample_ue(stored, landscape["min_x"], landscape["min_y"], landscape["spacing_x"], landscape["spacing_y"], xs, ys)
+
+    roadnet.set_bridge_decks(roads, surface_at)
+    ribbons = []
+    for road in roads:
+        rib = roadnet.build_ribbon(road, surface_at)
+        if rib is None:
+            continue
+        ribbons.append(rib)
+        m = len(rib["verts"]) // len(road["xy"])
+        centre = rib["verts"].reshape(len(road["xy"]), m, 3)
+        mid = centre[:, m // 2, 2] if m % 2 else 0.5 * (centre[:, m // 2 - 1, 2] + centre[:, m // 2, 2])
+        road["center"] = np.column_stack([road["xy"], mid])
+        road["width"] = float(np.max(road["hl"] + road["hr"]))
+    roads = [road for road in roads if "center" in road]
+    log(f"road ribbons {len(ribbons)}  triangles {sum(len(r['tris']) for r in ribbons)}")
     buffers, tree = _road_buffers(roads, log)
     buildings = cut_buildings(buildings, buffers, tree, log)
-    buildings = assign_building_z(buildings, height, landscape, log)
+    buildings = assign_building_z(buildings, surface_at, log)
     waters = prepare_water(warp, extracted, height, landscape, log)
     del buffers, tree
     tile = float(config["tile_size_m"])
@@ -1361,8 +1170,11 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     if tile_dir.exists():
         shutil.rmtree(tile_dir)
     tile_dir.mkdir(parents=True, exist_ok=True)
-    mesh_info = _write_tile_meshes(tile_dir, grouped, roads, waters, landscape, tile, log)
-    spawns, landmarks, notes = build_spawns(config, warp, height, landscape, roads, log)
+    mesh_info = _write_tile_meshes(tile_dir, grouped, ribbons, waters, landscape, tile, log)
+    index = spawn_rules.SurfaceIndex(ribbons, buildings, surface_at)
+    spawns, landmarks, notes = spawn_rules.build_spawns(
+        config, warp, roads, index, lambda x, y: _find_pad(x, y, stored, landscape), log
+    )
     minimap = _draw_minimap(out / "minimap.png", height, landscape, roads, landmarks["places"])
     dem = load_dem()
     harbour_rows = measure_harbour(warp, dem) if dem is not None else []
