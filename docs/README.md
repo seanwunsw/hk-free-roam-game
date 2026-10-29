@@ -42,7 +42,7 @@ F：450 cm 內最近嘅車，或者 700 cm 內最近嘅直升機。再按 F 喺�
 
 M 開大地圖，北向上，撳地圖會傳送。Ctrl+1 到 Ctrl+0 去中環、灣仔、銅鑼灣、尖沙咀、油麻地、旺角、啟德、沙田、屯門、大嶼山。其他地方用控制台 `HK.Go <id>`。
 
-F9 切換低／中畫質。中畫質開 Nanite、Lumen software、virtual shadow，並強制 `r.Lumen.HardwareRayTracing 0`。
+F9 切換低／中畫質。中係引擎 scalability High：Nanite、software Lumen（Global Distance Field）、virtual shadow，並強制 `r.Lumen.HardwareRayTracing 0`。低係引擎 Low，唔會關 Nanite。詳見 [PERFORMANCE.md](PERFORMANCE.md)。
 
 ## 座標工具
 
