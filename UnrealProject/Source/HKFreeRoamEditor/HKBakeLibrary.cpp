@@ -105,6 +105,9 @@ bool SaveAsset(UObject* Object)
 	UPackage* Package = Object->GetOutermost();
 	const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
+	// On a re-bake the old .uasset is still open by its loader, so Windows refuses to overwrite it
+	// and every tile logged "Could not save". Detach the loader before saving.
+	ResetLoaders(Package);
 	FSavePackageArgs Args;
 	Args.TopLevelFlags = RF_Public | RF_Standalone;
 	Args.SaveFlags = SAVE_NoError;
@@ -968,7 +971,9 @@ bool UHKBakeLibrary::BakeWorld()
 				++Imported;
 			};
 			ImportOne(TEXT("buildings"), Facade, TEXT("Facade"), true, EHKMeshCollision::Hulls, Hlod);
-			ImportOne(TEXT("roads"), Road, TEXT("Road"), true, EHKMeshCollision::Road, Hlod);
+			// Roads are not Nanite: a Nanite mesh renders its decimated fallback on SM5 and its complex
+			// collision comes from that fallback too, which tilted the flat ribbons and made the player slide.
+			ImportOne(TEXT("roads"), Road, TEXT("Road"), false, EHKMeshCollision::Road, Hlod);
 			ImportOne(TEXT("water"), WaterMat, TEXT("Water"), false, EHKMeshCollision::None, nullptr);
 			if (Index > 0 && Index % 250 == 0)
 			{
