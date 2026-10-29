@@ -45,8 +45,8 @@ No rebake is required for `r.Lumen.TraceMeshSDFs`. If the editor offers to rebui
 | `ShadowQuality@0` | `r.Shadow.Virtual.ResolutionLodBiasDirectional` | `2` | Coarsest step used by F9 Low. |
 | `ShadowQuality@1` | same | `1` | |
 | `ShadowQuality@2` | same | `1` | Playable default. `0` matches the camera. Subtracting 1 doubles virtual-shadow resolution and cost ([Virtual Shadow Maps](https://dev.epicgames.com/documentation/unreal-engine/virtual-shadow-maps-in-unreal-engine)). `+1` is one step coarser. Roads are non-Nanite and the landscape is non-Nanite, and that is the expensive part of a virtual shadow map. Epic and Cinematic are left on the engine curve. |
-| `GlobalIlluminationQuality@2` | `r.Lumen.ScreenProbeGather.DownsampleFactor` | `32` | Fewer screen probes as the factor rises ([Lumen Performance Guide](https://dev.epicgames.com/documentation/unreal-engine/lumen-performance-guide-for-unreal-engine?lang=en-US)). 32 is the engine High spacing. |
-| `ReflectionQuality@2` | `r.Lumen.Reflections.DownsampleFactor` | `2` | Half-resolution Lumen reflections on the default quality. A higher factor is cheaper. |
+| `GlobalIlluminationQuality@2` | `r.Lumen.ScreenProbeGather.DownsampleFactor` | `32` | Fewer screen probes as the factor rises ([Lumen Performance Guide](https://dev.epicgames.com/documentation/unreal-engine/lumen-performance-guide-for-unreal-engine)). 32 is the engine High spacing. |
+| `ReflectionQuality@2` | `r.Lumen.Reflections.DownsampleFactor` | `2` | One reflection ray per 2×2 quad on the default quality. The guide allows 1 or 2. |
 
 `Config/DefaultGameUserSettings.ini` selects level 2 for every `sg.*` group. `sg.ResolutionQuality=87` is the screen percentage, not a quality index. The engine string `PerfIndexValues_ResolutionQuality` is `50 71 87 100 100` (Low, Medium, High, Epic, Cinematic).
 
@@ -149,7 +149,7 @@ Two motion segments, same path each time, after the stills:
 | GPU | GPU | `stat gpu`, then `ProfileGPU` |
 | RHIT | RHI thread | `stat rhi` |
 
-`stat unitgraph` shows the same split over time. `ProfileGPU` (console, or Ctrl+Shift+comma) dumps one frame's GPU passes into the log. Copy that dump out of `Saved\Logs`.
+`stat unitgraph` shows the same split over time. `stat gpu` lists the Lumen passes. `ProfileGPU` (console, or Ctrl+Shift+comma) dumps one frame's GPU passes into the log. Copy that dump out of `Saved\Logs`. Lumen can overlap other work on async compute; `r.Lumen.AsyncCompute 0` turns that overlap off so a `ProfileGPU` of the Lumen passes is easier to read. Put it back to 1 afterwards. The default stays on.
 
 Memory pressure is a different shape: frame time climbs while the disk works, and Task Manager commit is near 16 GB. Launch B's `stat llm` / `stat llmfull` and `memreport -full` (writes `Saved\Profiling\MemReports\`) split CPU memory. `r.DistanceFields.LogAtlasStats 1` prints distance-field atlas use. `r.Shadow.Virtual.Stats 1` prints virtual shadow page counts. Cached pages are cheap. Uncached non-Nanite pages are the landscape and the roads.
 
