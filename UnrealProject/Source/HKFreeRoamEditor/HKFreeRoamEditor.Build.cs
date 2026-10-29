@@ -19,6 +19,7 @@ public class HKFreeRoamEditor : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"UnrealEd",
+			"EngineSettings",
 			"Landscape",
 			"MaterialEditor",
 			"Json",

@@ -49,7 +49,7 @@
   "target_long_axis_min_m": 15000,
   "target_long_axis_max_m": 25000,
   "places": [
-    {"id": "Central", "name_zh": "中環", "kind": "district", "lon": 114.1583, "lat": 22.2849, "hotkey": "One", "cars": 3, "player_start": true},
+    {"id": "Central", "name_zh": "中環", "kind": "district", "lon": 114.1583, "lat": 22.2849, "hotkey": "One", "cars": 3},
     {"id": "WanChai", "name_zh": "灣仔", "kind": "district", "lon": 114.1733, "lat": 22.2775, "hotkey": "Two", "cars": 1},
     {"id": "CausewayBay", "name_zh": "銅鑼灣", "kind": "district", "lon": 114.1836, "lat": 22.2804, "hotkey": "Three", "cars": 1},
     {"id": "TST", "name_zh": "尖沙咀", "kind": "district", "lon": 114.1722, "lat": 22.2974, "hotkey": "Four", "cars": 2},
@@ -57,7 +57,7 @@
     {"id": "MongKok", "name_zh": "旺角", "kind": "district", "lon": 114.1694, "lat": 22.3193, "hotkey": "Six", "cars": 2},
     {"id": "KaiTak", "name_zh": "啟德", "kind": "district", "lon": 114.2035, "lat": 22.3155, "hotkey": "Seven", "cars": 1},
     {"id": "ShaTin", "name_zh": "沙田", "kind": "district", "lon": 114.1880, "lat": 22.3829, "hotkey": "Eight", "cars": 1},
-    {"id": "TuenMun", "name_zh": "屯門", "kind": "district", "lon": 113.9770, "lat": 22.3910, "hotkey": "Nine", "cars": 1},
+    {"id": "TuenMun", "name_zh": "屯門", "kind": "district", "lon": 113.9770, "lat": 22.3910, "hotkey": "Nine", "cars": 1, "player_start": true},
     {"id": "Lantau", "name_zh": "大嶼山", "kind": "district", "lon": 113.9480, "lat": 22.2890, "hotkey": "Zero", "cars": 1},
     {"id": "KwunTong", "name_zh": "觀塘", "kind": "district", "lon": 114.2250, "lat": 22.3120, "cars": 1},
     {"id": "TseungKwanO", "name_zh": "將軍澳", "kind": "district", "lon": 114.2590, "lat": 22.3110, "cars": 1},
