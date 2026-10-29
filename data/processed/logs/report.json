@@ -1,6 +1,6 @@
 {
-  "ok": true,
-  "seconds": 138.3,
+  "ok": false,
+  "seconds": 155.0,
   "extent": {
     "min_x_m": -12193.275570889611,
     "max_x_m": 11226.224534466013,
@@ -172,13 +172,13 @@
   "counts": {
     "osm_buildings": 119432,
     "osm_roads": 35961,
-    "buildings": 69113,
-    "roads": 35961,
-    "bridges": 4030,
-    "tunnels_open_cut": 155,
-    "water": 929,
-    "tiles": 2461,
-    "triangles": 1733530
+    "buildings": 69106,
+    "roads": 21886,
+    "bridges": 2882,
+    "tunnels_open_cut": 147,
+    "water": 868,
+    "tiles": 2462,
+    "triangles": 3021399
   },
   "landscape": {
     "verts_x": 3025,
@@ -187,13 +187,12 @@
     "spacing_y_m": 8.055342592384891
   },
   "native_warp": {
-    "compiled": true,
-    "ok": true,
-    "stdout": "forward samples 68 max error m 5.03474e-06\ninverse samples 68 max error deg 7.67244e-11",
-    "stderr": ""
+    "compiled": false,
+    "ok": false,
+    "stderr": "g++ not found"
   },
   "spawn_notes": [
-    "Lamma has no ground road within 450 m",
+    "Lamma has no clear ground road within 450 m",
     "CentralHelipad helipad snapped from water/slope to flat land",
     "KaiTakHelipad helipad snapped from water/slope to flat land",
     "TSTHelipad helipad snapped from water/slope to flat land",
@@ -224,7 +223,7 @@
   "checks": {
     "long_axis": true,
     "harbour": true,
-    "native_warp": true,
+    "native_warp": false,
     "content": true
   }
 }
