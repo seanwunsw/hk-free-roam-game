@@ -111,8 +111,13 @@ bool SaveAsset(UObject* Object)
 	ResetLoaders(Package);
 	FSavePackageArgs Args;
 	Args.TopLevelFlags = RF_Public | RF_Standalone;
-	Args.SaveFlags = SAVE_NoError;
-	return UPackage::SavePackage(Package, Object, *Filename, Args);
+	Args.SaveFlags = SAVE_None;
+	const FSavePackageResultStruct Result = UPackage::Save(Package, Object, *Filename, Args);
+	if (Result.Result != ESavePackageResult::Success)
+	{
+		UE_LOG(LogHK, Warning, TEXT("SavePackage %s returned result %d"), *Package->GetName(), static_cast<int32>(Result.Result));
+	}
+	return Result.Result == ESavePackageResult::Success;
 }
 
 UObject* ReplaceObject(UPackage* Package, const FString& Name, UClass* Class)
