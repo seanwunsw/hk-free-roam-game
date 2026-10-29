@@ -1300,7 +1300,11 @@ def _run_native_check(root: Path, log: Log) -> dict:
         str(binary),
         str(source),
     ]
-    compiled = subprocess.run(compile_cmd, capture_output=True, text=True)
+    try:
+        compiled = subprocess.run(compile_cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        log("native warp check skipped: g++ is not installed")
+        return {"compiled": False, "ok": False, "stderr": "g++ not found"}
     if compiled.returncode != 0:
         log("native warp compile failed\n" + compiled.stderr)
         return {"compiled": False, "ok": False, "stderr": compiled.stderr[-2000:]}
@@ -1498,6 +1502,8 @@ def main(argv: list[str]) -> int:
     started = time.perf_counter()
     root = repo_root()
     out = root / "data" / "processed"
+    if "--out" in argv:
+        out = Path(argv[argv.index("--out") + 1]).resolve()
     out.mkdir(parents=True, exist_ok=True)
     log = Log(out / "logs" / "pipeline.log")
     try:
