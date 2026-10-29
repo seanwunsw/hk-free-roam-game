@@ -94,7 +94,7 @@ C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面�
 ## 數據同刻意限制
 
 - OSM：`https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf`（`asia/hong-kong-latest.osm.pbf` 會 404）。© OpenStreetMap contributors，ODbL。
-- 地形：SRTM `N22E113`、`N22E114`，`https://elevation-tiles-prod.s3.amazonaws.com/skadi/N22/`。1.5 米以下當海，負值乘 0.35。密集市區會偏高（灣仔、尖沙咀一類可以有幾十米），呢個係 SRTM，唔係地政總署 DTM。DTM 冇下載：`https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5-digital-terrain-model`。
+- 地形：SRTM `N22E113`、`N22E114`，`https://elevation-tiles-prod.s3.amazonaws.com/skadi/N22/`。1.5 米以下當海，負值乘 0.35，再壓低 2 米（海床至少 −2 米，branch `fix/road-pipeline`）。密集市區會偏高（灣仔、尖沙咀一類可以有幾十米），呢個係 SRTM，唔係地政總署 DTM。DTM 冇下載：`https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5-digital-terrain-model`。
 - 扭曲可分離，見 `ARCHITECTURE.md`。
 - 隧道係明挖，過海變低堤，冇管狀隧道。
 - OSM 內環（天井）填咗。`building:part` 如果更高，可能同主體重疊。
@@ -199,3 +199,50 @@ Sean 部機 pull `46cd1b5` 之後再 build `HKFreeRoamEditor` Win64 Development�
 - 結果：Meshes 4402，failed 0，cars 26，helicopters 5；角色 11/11 動畫 clip retarget 成功；地形 3025x2773。
 - 修正（73d88f2）：Landscape `Import()` 要用空 FGuid 做 key；UE 5.8 Interchange clip 名係 `<檔名><clip>` 冇分隔符。
 - 未測：HLOD 未生成；未入 PIE 試玩；角色朝向同 spring bone 未睇；commandlet 烘焙仍然會 crash；成套 pytest 未喺 box 行（安裝被擋）。
+
+## 道路 pipeline 重做（branch `fix/road-pipeline`，2026-10-29）
+
+全部改動喺 `tools/pipeline`，**冇改 C++**。只喺呢部 box 跑過 Python pipeline 同量度；**未喺 Sean 部 PC 重新烘焙、未入 PIE**。數據用 OSM 261025 snapshot（同之前 commit 嗰份一樣）。
+
+### 改咗乜
+
+| 問題 | 改動 | 檔案 |
+| --- | --- | --- |
+| 平行／重疊嘅路疊埋一齊（雙程路、OSM 重複 way） | 全部路沿線 4 米取樣，按等級／闊度排先後；同 mode（橋再要同 `layer`）、方向差 30° 內、橫向重疊嘅點併入優先嗰條，嗰條加闊（每邊最多 16 米），被併嘅段刪走 | `roads.py` `merge_parallel` |
+| 路面高度同地面唔夾、最近種子點跳來跳去 | 每條路先做平滑設計高度（坡度上限 30%，但永遠夾喺平滑地形 ±3 米內），一次過用加權平均挖入地形（冇「最近一條路贏」）；之後 ribbon 每個頂點都喺 **量化後嘅 r16** 用 Unreal 三角形分法重新取樣 | `roads.py` `set_design_profiles`、`carve_terrain`、`build_ribbon`；`surface.py` |
+| Ribbon 邊唔跟橫向斜度、太粗 | 每段 4 米、橫向 2–4 米一格，每格頂點獨立取樣地面，所以邊跟住橫坡 | `roads.py` `ribbon_grid` |
+| 18% 坡度上限 | 改做 30%，但設計高度唔可以離平滑地形多過 3 米；舊上限喺山路會令路面離地幾十米 | `roads.py` |
+| 橋 | 橋面 = 兩頭地面高度按圖距離淡入（40 米）到淨空（最少 6 米），斜坡尾同地面接；同一 `layer` 嘅橋段先會連埋 | `roads.py` `set_bridge_decks` |
+| 隧道 | 仍然係明挖（冇管道）。地面路橫過明挖坑時改做橋面跨過，唔會畀坑切斷 | `roads.py` `bridge_over_trenches` |
+| 海床 | 海格喺平滑之後再壓到 ≤ −2 米；建築物「喺水入面」嘅門檻跟住移 2 米 | `build_world.py` |
+| 建築物 | 底部用腳印最低一點（唔再浮喺斜坡），屋頂高度唔變 | `build_world.py` `assign_building_z` |
+| 出生點 | 由 `world.json` `player_start` 起計：車同玩家都要企喺最高可行走面，頭頂 4 米內冇路面或建築物；揀唔到就喺附近另揾。屯門玩家喺 `TuenMun_0` 旁邊 3 米 | `spawns.py` |
+| 量度 | `python -m pipeline.check_roads [processed]`（喺 `tools/` 行）：疊路面積、路面同地形高度差（Unreal 三角形）、出生點頭頂幾何 | `check_roads.py` |
+
+### 前後對比（`check_roads.py`，同一份 OSM）
+
+| 指標 | 之前（commit 咗嘅數據） | 之後 |
+| --- | --- | --- |
+| 有兩層或以上路面嘅面積 | 21.6% | 8.1%（差唔多全部係橋喺路上面） |
+| 疊埋而高度差 0.45–4 米（會卡腳／浮） | 9.7% | 0.84% |
+| 地面路同地面路疊埋高度差 > 0.45 米 | 14.0% | 0.0% |
+| 路面離地形 −0.45～+0.45 米（全部路面，唔計離地 > 4 米） | 60.8% | 97.6% |
+| 地面路離地形 ±0.45 米內 | 未分（舊數據冇 mode） | 99.94%（p99 +0.27 米） |
+| 出生點頭頂 4 米內有幾何 | 27 個中 4 個（包括玩家） | 27 個中 0 個 |
+| 出生點喺建築物入面 | 3 個（中環三架車） | 0 |
+| 海格 ≤ −2 米 | 26.5% 嘅格（其餘海喺 −2～0） | 43.6%；−2～0 米剩返 0.09% 嘅格 |
+| 陸上建築物 | 69113 | 69106 |
+| 車 | 26 | 26 |
+| Tile／三角形 | 2461／1.73M | 2462／3.02M（路 ribbon 1.74M） |
+
+`pytest tools/tests`：34 項通過（新 `test_roads.py` 11 項）。`pyflakes tools` 乾淨。報告 `ok: false` 只係因為 box 冇 g++，native warp check 跳過咗；其他檢查都過。
+
+### 未測／要 Sean 部 PC 做
+
+- 要 pull 呢個 branch、`git lfs pull`，再用完整 editor 重新烘焙（同「第一次完整烘焙成功」一樣條命令），開 HKWorld 入 PIE 睇。
+- Unreal Landscape 三角形對角線方向係憑引擎源碼記憶（NW–SE），**未喺 UE 證實**。如果錯咗，路面中間會有最多約一格高度差嘅一半浮起或陷落。
+- 三角形多咗大約 75%（路 ribbon 細格），要睇 FPS。
+- 建築物碰撞仍然係每棟一個凸包（C++，冇改），可能喺窄路變隱形牆。
+- 明挖隧道坑仍然好深；跨坑嘅地面路改咗做橋（286 段）。
+- 海岸線入面大約 0.3 平方公里（以前平滑後高過 1.5 米嘅岸邊格）而家變海；內陸水面由 929 變 868。
+- 南丫島仍然冇車（450 米內冇地面路）。
