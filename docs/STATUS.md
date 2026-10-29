@@ -191,3 +191,11 @@ Sean 部機 pull `46cd1b5` 之後再 build `HKFreeRoamEditor` Win64 Development�
 `-run=HKBakeWorld` 喺 Sean 部機匯入 `data/characters/player.vrm` 時 crash（exit 3）。VRM4U `ConvertModel`、`ConvertRig`、`ConvertIKRig`、`ConvertMorphTarget` 都行完，`SK_player` build 成功；之後 `VRMConverter::ConvertPose()`（`VrmConvertPose.cpp:1424`）喺 `GWorld` spawn `ASkeletalMeshActor`，引擎 assert：`InMeshDesc.Scene && InMeshDesc.Scene->GetSkeletalMeshUpdater()`（`SkeletalRenderGPUSkin.cpp:673`，「Scene cannot be null when creating a SkeletalMeshObject」）。
 
 修正：`ImportVrm` 設 `Options.bSkipRetargeter = true`。VRM4U 源碼入面呢個 flag 只喺 `ConvertPose` 開頭用嚟直接 return，唔影響 `ConvertIKRig`（`IK_*_Mannequin` 喺 `ConvertPose` 之前已經寫好）。烘焙自己整 `RTG_UAL_To_Player`，冇讀 VRM4U 嘅 `POSE_retarget_*`。**未再烘焙**。
+
+## 第一次完整烘焙成功（2026-10-28，UE 5.8.4，Sean 部 PC）
+
+- 用 commandlet（`-run=HKBakeWorld`）烘焙喺 UE 5.8.4 會 assert：commandlet 冇 FScene 同 Slate，VRM4U 同 Interchange 匯入 skeletal mesh 時要用到。
+- 改用完整 editor 行同一個 script：`UnrealEditor.exe HKFreeRoam.uproject -ExecutePythonScript=<abs>\Content\Python\bake_hk_world.py -unattended`。
+- 結果：Meshes 4402，failed 0，cars 26，helicopters 5；角色 11/11 動畫 clip retarget 成功；地形 3025x2773。
+- 修正（73d88f2）：Landscape `Import()` 要用空 FGuid 做 key；UE 5.8 Interchange clip 名係 `<檔名><clip>` 冇分隔符。
+- 未測：HLOD 未生成；未入 PIE 試玩；角色朝向同 spring bone 未睇；commandlet 烘焙仍然會 crash；成套 pytest 未喺 box 行（安裝被擋）。
