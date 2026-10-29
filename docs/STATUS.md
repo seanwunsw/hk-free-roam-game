@@ -199,3 +199,7 @@ Sean 部機 pull `46cd1b5` 之後再 build `HKFreeRoamEditor` Win64 Development�
 - 結果：Meshes 4402，failed 0，cars 26，helicopters 5；角色 11/11 動畫 clip retarget 成功；地形 3025x2773。
 - 修正（73d88f2）：Landscape `Import()` 要用空 FGuid 做 key；UE 5.8 Interchange clip 名係 `<檔名><clip>` 冇分隔符。
 - 未測：HLOD 未生成；未入 PIE 試玩；角色朝向同 spring bone 未睇；commandlet 烘焙仍然會 crash；成套 pytest 未喺 box 行（安裝被擋）。
+
+## 畫質同量度（branch `perf/sm6-baseline`）
+
+SM6 目標同路面非 Nanite 喺 `fix/road-collision`，呢個 branch 冇改嗰兩樣。呢度加咗 software Lumen 嘅 Global Distance Field 追蹤、distance field voxel density 鎖喺引擎預設 0.2、High 畫質嘅 VSM bias／Lumen probe／反射 downsample，同 F9 改行 scalability。**呢部機冇 Unreal，未編譯、未烘焙、未 Play。** 幀數仍然係未 profile 嘅 PIE 數：穩態大約 120+ FPS（當時最高 feature level 係 SM5），7 FPS 只出現喺第一次載入。量完先至填 after。步驟見 [PERFORMANCE.md](PERFORMANCE.md)。
