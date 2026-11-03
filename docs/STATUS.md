@@ -443,3 +443,25 @@ Sean 部 PC 用 `54535be` build 同烘焙成功，撳 F 上到車，但係 HUD �
 
 - **未 build、未 PIE**。呢部機冇 Unreal。要確認：揸得郁、轉彎、泊住嘅車唔溜、落車再上車。
 - 轆彈簧 `SpringRate = 45000` 比 Chaos 預設（250）硬好多，揸起上嚟可能好硬或者震；今次冇改。
+
+## 路闊、標線、路口、小路、建築、單程路、泊車高度（branch `fix/car-drive`，2026-11-03）
+
+詳細計劃同數字：`docs/ROAD_VISUALS_PLAN.md`。**全部未喺 UE 編譯、烘焙或者玩過**，以下只係 pipeline 同 Python 檢查嘅結果。
+
+### 改咗乜
+- 路闊跟 warp 垂直路方向嘅壓縮比，每線最少 3.0 m、最多真實線闊；無連接路面重疊 1.883%、灰板 1.946%。
+- 路面標線改用米：UV0 = (沿路米, 離左邊米)，UV1 = (路闊, 分隔位 + 線數)，vertex colour R = 標線開關。黃邊線 0.12 m、白虛線分線、雙程先有雙白中線、路口冇線。單程路有中線 = 0。
+- 路口補面 22,766 個（material 3，冇標線）。
+- 新增 residential / living_street / service 車路，footway / pedestrian / steps 行人路（material 4），主路兩邊 1.5 m × 0.15 m 行人路帶。
+- 建築：細建築門檻降低、新外牆色盤、天台淺灰同牆分開（M_Facade）。陸地上 72,873 棟（之前 71,955）。
+- 單程路：讀 `oneway`、roundabout、motorway。車跟合法方向泊最左線，逆向 0。
+- 車喺半空出世：原因係烘焙將車放喺 spawn + 100 cm，而 main 車身係 kinematic，所以一直吊住；開咗物理之後會跌 1 m。而家 spawn 計 4 轆路面高同 pitch，z = 接觸點 + 0.02 m，烘焙唔再加 100 cm，用 pitch；`HoldIfGroundUnloaded` trace 由車上 1 m 開始。最大轆離地 0.079 m。
+- 三角形 2.83M → 4.51M（+59.6%）。
+
+### 退步（要知）
+- tunnel within step 97.18% → 93.49%；coast agree 99.758% → 99.644%（海邊 service 路）；橋淨空最低 5.26 → 5.03 m。
+
+### 未測試
+- M_Road / M_Facade HLSL 未 compile；UV1（TEXCOORD_1）讀取未試；Nanite 下 UV 精度未睇。
+- 路邊石垂直面可能有 winding 警告。
+- 車 spawn 高度、pitch 喺 Chaos 入面穩唔穩未試。
