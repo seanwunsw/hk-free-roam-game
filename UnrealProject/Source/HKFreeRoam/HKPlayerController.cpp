@@ -277,6 +277,11 @@ void AHKPlayerController::OnLook(const FInputActionValue& Value)
 	// Mouse2D +Y follows the screen and points downward, so pitch is inverted.
 	AddYawInput(Look.X);
 	AddPitchInput(-Look.Y);
+	if (AHKCar* Car = Cast<AHKCar>(GetPawn()))
+	{
+		// The chase camera ignores the control rotation; it takes the look offset and recentres.
+		Car->AddCameraLook(Look.X, -Look.Y);
+	}
 	if (AHKHelicopter* Heli = Cast<AHKHelicopter>(GetPawn()))
 	{
 		Heli->SetMouseCyclic(FMath::Clamp(Look.X * 0.35f, -1.f, 1.f), FMath::Clamp(-Look.Y * 0.35f, -1.f, 1.f));

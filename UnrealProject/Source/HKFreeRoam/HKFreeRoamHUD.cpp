@@ -161,9 +161,11 @@ void AHKFreeRoamHUD::DrawReadout()
 		? FString::Printf(TEXT("%s  空間Actor %d"), bStreamingComplete ? TEXT("串流完成") : TEXT("串流中"), LoadedSpatialActors)
 		: FString(TEXT("未烘焙 World Partition"));
 	FString Ride;
-	if (Cast<AHKCar>(Pawn))
+	if (const AHKCar* Car = Cast<AHKCar>(Pawn))
 	{
-		Ride = TEXT("駕車");
+		const int32 Gear = Car->Telemetry().Gear;
+		const FString GearText = Gear > 0 ? FString::Printf(TEXT("%d檔"), Gear) : (Gear < 0 ? FString(TEXT("倒車")) : FString(TEXT("N")));
+		Ride = FString::Printf(TEXT("駕車 %s  %s"), HKHandling::ClassName(Car->GetCarClass()), *GearText);
 	}
 	else if (const AHKHelicopter* Heli = Cast<AHKHelicopter>(Pawn))
 	{
