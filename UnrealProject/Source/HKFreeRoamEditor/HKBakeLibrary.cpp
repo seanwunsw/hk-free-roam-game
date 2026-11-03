@@ -452,13 +452,17 @@ bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPoly
 		const FVector P0(Positions[Mesh.GetVertexInstanceVertex(Instances[I0])]);
 		const FVector P1(Positions[Mesh.GetVertexInstanceVertex(Instances[I1])]);
 		const FVector P2(Positions[Mesh.GetVertexInstanceVertex(Instances[I2])]);
-		const FVector Geometric = FVector::CrossProduct(P1 - P0, P2 - P0);
-		if (Geometric.SizeSquared() < 0.01f)
+		// UE's face normal is Cross(P2 - P0, P1 - P0) (StaticMeshOperations, and Chaos after its
+		// bFlipNormals cook). GltfToUnreal mirrors the axes, so glTF's counter-clockwise order comes
+		// out clockwise here. Order corners so UE's face normal agrees with the authored normals;
+		// the old Cross(P1 - P0, P2 - P0) test left every face pointing down and nobody could land.
+		const FVector Face = FVector::CrossProduct(P2 - P0, P1 - P0);
+		if (Face.SizeSquared() < 0.01f)
 		{
 			continue;
 		}
 		const FVector Stored = FVector(Normals[Instances[I0]]) + FVector(Normals[Instances[I1]]) + FVector(Normals[Instances[I2]]);
-		if (FVector::DotProduct(Geometric, Stored) < 0.f)
+		if (FVector::DotProduct(Face, Stored) < 0.f)
 		{
 			Swap(I1, I2);
 		}
@@ -482,6 +486,46 @@ bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPoly
 		}
 	}
 	return true;
+}
+
+struct FHKWindingStats
+{
+	int64 Triangles = 0;
+	int64 Opposed = 0;
+	int32 Meshes = 0;
+};
+
+FHKWindingStats GWindingStats;
+
+// Reads the finished triangles back and counts any whose UE face normal does not point the same
+// way as the glTF normals. Expect zero; anything else means collision floors face down again.
+void CountOpposedFaces(const FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, const FString& AssetName)
+{
+	TVertexAttributesRef<FVector3f> Positions = Attributes.GetVertexPositions();
+	TVertexInstanceAttributesRef<FVector3f> Normals = Attributes.GetVertexInstanceNormals();
+	int64 Triangles = 0;
+	int64 Opposed = 0;
+	for (const FTriangleID Triangle : Mesh.Triangles().GetElementIDs())
+	{
+		const TArrayView<const FVertexInstanceID> Corners = Mesh.GetTriangleVertexInstances(Triangle);
+		const FVector P0(Positions[Mesh.GetVertexInstanceVertex(Corners[0])]);
+		const FVector P1(Positions[Mesh.GetVertexInstanceVertex(Corners[1])]);
+		const FVector P2(Positions[Mesh.GetVertexInstanceVertex(Corners[2])]);
+		const FVector Face = FVector::CrossProduct(P2 - P0, P1 - P0);
+		const FVector Stored = FVector(Normals[Corners[0]]) + FVector(Normals[Corners[1]]) + FVector(Normals[Corners[2]]);
+		++Triangles;
+		if (FVector::DotProduct(Face, Stored) <= 0.0)
+		{
+			++Opposed;
+		}
+	}
+	GWindingStats.Triangles += Triangles;
+	GWindingStats.Opposed += Opposed;
+	++GWindingStats.Meshes;
+	if (Opposed > 0)
+	{
+		UE_LOG(LogHK, Warning, TEXT("%s: %lld of %lld triangles face away from their glTF normals"), *AssetName, Opposed, Triangles);
+	}
 }
 
 UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMaterialInterface* Material, const FName& Slot, bool bNanite, EHKMeshCollision Collision)
@@ -512,6 +556,7 @@ UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMateri
 	{
 		return nullptr;
 	}
+	CountOpposedFaces(Description, Attributes, AssetName);
 	return BuildMesh(TEXT("/Game/HK/Tiles"), AssetName, Description, Material, Slot, bNanite, Collision, Hulls);
 }
 
@@ -953,6 +998,7 @@ bool UHKBakeLibrary::BakeWorld()
 	Manifest->TryGetArrayField(TEXT("tiles"), Tiles);
 	int32 Imported = 0;
 	int32 Failed = 0;
+	GWindingStats = FHKWindingStats();
 	if (Tiles)
 	{
 		for (int32 Index = 0; Index < Tiles->Num(); ++Index)
@@ -992,6 +1038,16 @@ bool UHKBakeLibrary::BakeWorld()
 				UE_LOG(LogHK, Display, TEXT("Imported %d tile meshes (%d failed)"), Imported, Failed);
 			}
 		}
+	}
+	if (GWindingStats.Opposed > 0)
+	{
+		UE_LOG(LogHK, Warning, TEXT("HK winding check: %lld of %lld tile triangles in %d meshes face away from their glTF normals"),
+			GWindingStats.Opposed, GWindingStats.Triangles, GWindingStats.Meshes);
+	}
+	else
+	{
+		UE_LOG(LogHK, Display, TEXT("HK winding check: 0 of %lld tile triangles in %d meshes face away from their glTF normals"),
+			GWindingStats.Triangles, GWindingStats.Meshes);
 	}
 	if (Imported == 0)
 	{

@@ -13,7 +13,9 @@
 原點經緯度 114.174、22.295。先轉本地東、北米，再做可分離扭曲：
 
 - X 只經 G(x)
-- Y = H(y) + A(x) * tanh((y - yc(x)) / W) − 常數
+- Y = H(y) + A * tanh((y - yc(x)) / W)，常數已經摺入 H，令原點係 (0, 0)
+
+A 對所有 x 都一樣，所以維港以北嘅陸地成塊向北移 A、以南向南移 A，唔會隨經度斜切。yc 跟 `harbour_yc_lonlat`（維港中線再向東西延伸落海）再做高斯平滑（`harbour_yc_smooth_m`）。LUT 版本係 2；舊版本嘅 `warp_lut.bin` 會被拒絕。
 
 G、H 係正數 smoothstep 比例嘅積分，Jacobian 保持正數，所以唔會折疊或者打結。遊戲 +X 東、+Y 北，米。Unreal 係左手座標厘米：X 東、Y 南、Z 向上，即係 `ue = (東, −北, 上) × 100`。所有轉換都經 `HKAxes.h`（C++）同 `game_m_to_unreal_cm`（Python）；直接將北放落 +Y 會令成個城市東西鏡像。
 

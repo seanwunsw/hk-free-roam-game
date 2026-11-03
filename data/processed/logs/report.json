@@ -1,64 +1,155 @@
 {
   "ok": true,
-  "seconds": 138.3,
+  "seconds": 182.1,
   "extent": {
     "min_x_m": -12193.275570889611,
     "max_x_m": 11226.224534466013,
-    "min_y_m": -9814.564286827183,
-    "max_y_m": 11814.845379263736,
+    "min_y_m": -9211.462621809065,
+    "max_y_m": 9643.781175422357,
     "width_m": 23419.500105355626,
-    "height_m": 21629.40966609092,
+    "height_m": 18855.243797231422,
     "long_axis_m": 23419.500105355626
   },
   "long_axis_m": 23419.500105355626,
+  "coast": {
+    "coastline_ways": 1608,
+    "faces": 911,
+    "land_faces": 910,
+    "sea_faces": 1,
+    "unlabelled_faces": 0,
+    "land_km2_in_extract": 1114.0,
+    "sea_level_water_polygons": 795,
+    "harbour_clearance": {
+      "min_m": 1084.7405929114814,
+      "real_m": 426.95660603016114,
+      "kowloon_lonlat": [
+        114.23645000000519,
+        22.287850000001587
+      ],
+      "island_lonlat": [
+        114.23460000000513,
+        22.284400000001472
+      ]
+    },
+    "vertices": 6876622,
+    "osm_sea_vertices": 3984386,
+    "osm_land_vertices": 2892236,
+    "sea_below_0_pct": 99.804,
+    "sea_below_seabed_pct": 99.743,
+    "land_above_0_pct": 100.0,
+    "agree_pct": 99.886,
+    "spawns_over_sea": []
+  },
+  "road_heights": {
+    "graph": {
+      "vertices": 260210,
+      "junction_vertices": 20949,
+      "contact_edges": 8695,
+      "max_grade_violation_m": 30.135243218437363,
+      "edges_over_grade_pct": 1.7937609300814727,
+      "clamped_pct": 7.618462011452289
+    },
+    "design_junction_spread": {
+      "junctions": 12556,
+      "max_m": 0.0,
+      "p99_m": 0.0,
+      "over_5cm_pct": 0.0,
+      "over_50cm_pct": 0.0
+    },
+    "design_grade": {
+      "length_km": 931.229170289786,
+      "over_limit_pct": 1.8208037541122921,
+      "max_grade": 1.8184979894214592
+    },
+    "bridge_decks": {
+      "bridge_pieces": 2546,
+      "raised_over_crossings": 160,
+      "max_raise_m": 22.77828960006134
+    },
+    "ribbon_junction_spread": {
+      "junctions": 14706,
+      "max_m": 28.59920664334306,
+      "p99_m": 6.842944242457461,
+      "over_5cm_pct": 26.83938528491772,
+      "over_50cm_pct": 8.275533795729634
+    },
+    "ribbon_junction_spread_ground": {
+      "junctions": 12272,
+      "max_m": 2.374494177501031,
+      "p99_m": 0.44734403588551064,
+      "over_5cm_pct": 17.902542372881356,
+      "over_50cm_pct": 0.7659713168187744
+    },
+    "ribbon_grade_ground": {
+      "length_km": 925.5535371185221,
+      "over_limit_pct": 3.072492990348036,
+      "max_grade": 1.4678097906702932
+    },
+    "bridge_clearance": {
+      "crossings": 1158,
+      "min_m": 5.262868352477552,
+      "p05_m": 5.499999999000002,
+      "median_m": 7.086662288350413,
+      "under_4m_pct": 0.0,
+      "under_5_5m_pct": 0.6044905008635579
+    },
+    "spawn_lanes": {
+      "cars": 26,
+      "unmeasured": 0,
+      "max_centerline_m": 3.2,
+      "max_heading_err_deg": 0.24,
+      "body_off_ribbon": 0,
+      "player_to_first_car_m": 3.0
+    }
+  },
   "harbour_game_width_m": {
-    "sections": 26,
-    "min": 1519.821444853204,
-    "median": 2185.7642095905803,
-    "max": 3399.5518894658867
+    "sections": 142,
+    "min": 1327.507906443835,
+    "median": 2198.210929265117,
+    "max": 3543.0072548756025
   },
   "place_scales": [
     {
       "id": "Central",
       "scale_x": 0.5,
-      "scale_y": 0.5626559701223149,
-      "horizontal": 0.5304036058146263
+      "scale_y": 0.5625469386328797,
+      "horizontal": 0.5303522125120624
     },
     {
       "id": "WanChai",
       "scale_x": 0.5,
-      "scale_y": 0.5005499077433093,
-      "horizontal": 0.5002748783135674
+      "scale_y": 0.5064164304567189,
+      "horizontal": 0.5031979881004687
     },
     {
       "id": "CausewayBay",
       "scale_x": 0.5,
-      "scale_y": 0.5008442638146351,
-      "horizontal": 0.5004219538622556
+      "scale_y": 0.5076542718688812,
+      "horizontal": 0.5038126000155619
     },
     {
       "id": "TST",
       "scale_x": 0.5,
-      "scale_y": 1.057549572456367,
-      "horizontal": 0.7271690217742939
+      "scale_y": 0.5237393506378523,
+      "horizontal": 0.511732034681166
     },
     {
       "id": "YauMaTei",
       "scale_x": 0.5,
-      "scale_y": 0.5000214470379557,
-      "horizontal": 0.5000107234039864
+      "scale_y": 0.500001060003211,
+      "horizontal": 0.5000005300013246
     },
     {
       "id": "MongKok",
       "scale_x": 0.5,
-      "scale_y": 0.5000002622408667,
-      "horizontal": 0.5000001311204162
+      "scale_y": 0.5000000162792883,
+      "horizontal": 0.5000000081396441
     },
     {
       "id": "KaiTak",
       "scale_x": 0.5,
-      "scale_y": 0.5005787660841575,
-      "horizontal": 0.5002892993479661
+      "scale_y": 0.5006313152914719,
+      "horizontal": 0.5003155580688411
     },
     {
       "id": "ShaTin",
@@ -69,26 +160,26 @@
     {
       "id": "TuenMun",
       "scale_x": 0.2966703848771431,
-      "scale_y": 0.5,
-      "horizontal": 0.38514308047603757
+      "scale_y": 0.5000000000000102,
+      "horizontal": 0.3851430804760415
     },
     {
       "id": "Lantau",
       "scale_x": 0.1883889265718608,
-      "scale_y": 0.5,
-      "horizontal": 0.30691116513729244
+      "scale_y": 0.5000000000000241,
+      "horizontal": 0.3069111651372998
     },
     {
       "id": "KwunTong",
       "scale_x": 0.5,
-      "scale_y": 0.5002781455668699,
-      "horizontal": 0.5001390534475737
+      "scale_y": 0.5000693696323256,
+      "horizontal": 0.5000346836132098
     },
     {
       "id": "TseungKwanO",
       "scale_x": 0.5,
-      "scale_y": 0.5000224519003352,
-      "horizontal": 0.5000112258241485
+      "scale_y": 0.5000000000882877,
+      "horizontal": 0.5000000000441438
     },
     {
       "id": "TsuenWan",
@@ -99,7 +190,7 @@
     {
       "id": "KwaiChung",
       "scale_x": 0.5,
-      "scale_y": 0.5,
+      "scale_y": 0.5000000000000001,
       "horizontal": 0.5
     },
     {
@@ -129,8 +220,8 @@
     {
       "id": "Aberdeen",
       "scale_x": 0.5,
-      "scale_y": 0.5000000000017257,
-      "horizontal": 0.5000000000008629
+      "scale_y": 0.5000000000005226,
+      "horizontal": 0.5000000000002612
     },
     {
       "id": "Stanley",
@@ -141,8 +232,8 @@
     {
       "id": "VictoriaPeak",
       "scale_x": 0.5,
-      "scale_y": 0.5000140511306529,
-      "horizontal": 0.5000070255159685
+      "scale_y": 0.5000004648325439,
+      "horizontal": 0.5000002324162179
     },
     {
       "id": "TaiMoShan",
@@ -153,8 +244,8 @@
     {
       "id": "Airport",
       "scale_x": 0.16341222683964587,
-      "scale_y": 0.5,
-      "horizontal": 0.28584281243337734
+      "scale_y": 0.5000000052053983,
+      "horizontal": 0.28584281392130306
     },
     {
       "id": "CheungChau",
@@ -172,28 +263,28 @@
   "counts": {
     "osm_buildings": 119432,
     "osm_roads": 35961,
-    "buildings": 69113,
-    "roads": 35961,
-    "bridges": 4030,
-    "tunnels_open_cut": 155,
-    "water": 929,
-    "tiles": 2461,
-    "triangles": 1733530
+    "buildings": 71955,
+    "roads": 22317,
+    "bridges": 2792,
+    "tunnels_open_cut": 150,
+    "water": 882,
+    "tiles": 2371,
+    "triangles": 2826792
   },
   "landscape": {
     "verts_x": 3025,
-    "verts_y": 2773,
+    "verts_y": 2458,
     "spacing_x_m": 7.976025167114956,
-    "spacing_y_m": 8.055342592384891
+    "spacing_y_m": 7.958992184465373
   },
   "native_warp": {
     "compiled": true,
     "ok": true,
-    "stdout": "forward samples 68 max error m 5.03474e-06\ninverse samples 68 max error deg 7.67244e-11",
+    "stdout": "forward samples 68 max error m 2.56981e-06\ninverse samples 68 max error deg 7.65645e-11",
     "stderr": ""
   },
   "spawn_notes": [
-    "Lamma has no ground road within 450 m",
+    "Lamma has no clear ground road within 450 m",
     "CentralHelipad helipad snapped from water/slope to flat land",
     "KaiTakHelipad helipad snapped from water/slope to flat land",
     "TSTHelipad helipad snapped from water/slope to flat land",
@@ -208,6 +299,7 @@
   ],
   "data": {
     "osm": "data/raw/hong-kong-latest.osm.pbf from https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf",
+    "coastline": "OSM natural=coastline from the same extract; extract polygon data/config/hong-kong.poly from https://download.geofabrik.de/asia/china/hong-kong.poly",
     "dem": "SRTM N22E113 and N22E114 from https://elevation-tiles-prod.s3.amazonaws.com/skadi/N22/",
     "lands_dtm": "not downloaded; https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5-digital-terrain-model"
   },
@@ -216,7 +308,7 @@
     "Tunnels, including cross-harbour tubes, are open cuts. The deck is the chord between the portals, clamped so it stays above the water plane. There is no bored tunnel and no tunnel roof.",
     "Building courtyards (OSM inner rings) are filled. building:part footprints may still overlap the parent footprint when the part is taller.",
     "Residential, service, footway, path and steps are omitted. Cheung Chau and Lamma only keep unclassified streets, so driving there is local. There is no ferry; walk or fly between islands.",
-    "Terrain is SRTM 1 arc-second, not the Lands Department DTM. Cells at or below 1.5 m are treated as sea and negative bathymetry is scaled by 0.35. Shore noise can remain.",
+    "Terrain heights are SRTM 1 arc-second, not the Lands Department DTM. Land and sea come from OSM natural=coastline inside the Geofabrik extract polygon (SRTM > 1.5 m outside it, i.e. Shenzhen); sea is a synthetic shelf from -2 m at the shore to about -10 m, not surveyed bathymetry. Low land is clamped to +0.6 m.",
     "Minimum road widths (3.2 m / 8 m) are cut out of building footprints, so dense blocks lose a strip along the carriageway.",
     "HLOD meshes are not built by this script. The Unreal baker assigns an HLOD layer; generating proxies is a separate editor command.",
     "This environment did not launch Unreal Editor, so the bake, character, cars, helicopter and frame rate were not played."
@@ -225,6 +317,7 @@
     "long_axis": true,
     "harbour": true,
     "native_warp": true,
-    "content": true
+    "content": true,
+    "coast": true
   }
 }
