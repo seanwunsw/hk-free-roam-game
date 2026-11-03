@@ -73,7 +73,7 @@ C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面�
 
 ### 仍然未處理（Minor）
 
-1. 懸掛 `SpringRate` 45000 可能太硬
+1. 懸掛 `SpringRate`：45000 改咗做 600（2026-11-03，疑似 spawn 反轉原因，**未驗證**，未喺 PIE 試過）
 2. 傳送只 trace 到 Landscape，未等建築／路串流
 3. 單一 Landscape actor（2112 components，冇 streaming proxy）
 4. `GConfig` 寫 `DefaultEngine.ini` 可能寫唔入（startup map）
@@ -442,7 +442,7 @@ Sean 部 PC 用 `54535be` build 同烘焙成功，撳 F 上到車，但係 HUD �
 ### 未測試
 
 - **未 build、未 PIE**。呢部機冇 Unreal。要確認：揸得郁、轉彎、泊住嘅車唔溜、落車再上車。
-- 轆彈簧 `SpringRate = 45000` 比 Chaos 預設（250）硬好多，揸起上嚟可能好硬或者震；今次冇改。
+- 轆彈簧 `SpringRate` 由 45000 改咗做 600，`SpringPreload` 50，`SuspensionMaxRaise` 10 cm（2026-11-03）。推斷：45000 太硬，開咗物理之後積分唔穩，令車 spawn 時反轉；「Chaos 內部 ×100」都係推論，**未驗證**，要等 Sean 喺 PIE 試過先算修好。另外加咗 `SelfRightIfFlipped`（冇 sweep，喺橋底或者隧道入面可能會卡入天花）。
 
 ## 路闊、標線、路口、小路、建築、單程路、泊車高度（branch `fix/car-drive`，2026-11-03）
 

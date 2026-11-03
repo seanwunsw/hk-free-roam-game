@@ -46,6 +46,7 @@ private:
 	void PatchWheelBones();
 	void EnableChassisPhysics();
 	void UpdateWheelVisuals(float DeltaSeconds);
+	void SelfRightIfFlipped(float DeltaSeconds);
 
 	UPROPERTY(VisibleAnywhere, Category = "HK")
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -68,4 +69,6 @@ private:
 	bool bOccupied = false;
 	float VisualSteerDegrees = 0.f;
 	float WheelSpinDegrees = 0.f;
+	float FlippedSeconds = 0.f;
+	static constexpr float FlipHoldSeconds = 2.f;
 };

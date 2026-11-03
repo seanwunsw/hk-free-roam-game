@@ -338,7 +338,29 @@ void AHKCar::Tick(float DeltaSeconds)
 		Park();
 		HoldIfGroundUnloaded();
 	}
+	SelfRightIfFlipped(DeltaSeconds);
 	UpdateWheelVisuals(DeltaSeconds);
+}
+
+void AHKCar::SelfRightIfFlipped(float DeltaSeconds)
+{
+	// On its side or roof and almost stopped for FlipHoldSeconds: put it back on its wheels,
+	// same place and heading, 1 m up so it drops onto the road.
+	const bool bFlipped = GetActorUpVector().Z < 0.3f;
+	const bool bSlow = GetVelocity().SizeSquared() < FMath::Square(150.f);
+	FlippedSeconds = (bFlipped && bSlow) ? FlippedSeconds + DeltaSeconds : 0.f;
+	if (FlippedSeconds < FlipHoldSeconds)
+	{
+		return;
+	}
+	FlippedSeconds = 0.f;
+	const FVector Forward = GetActorForwardVector();
+	const float Yaw = FMath::Abs(Forward.Z) < 0.99f ? FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X)) : GetActorRotation().Yaw;
+	UPrimitiveComponent* Body = GetMesh();
+	Body->SetPhysicsLinearVelocity(FVector::ZeroVector);
+	Body->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
+	SetActorLocationAndRotation(GetActorLocation() + FVector(0.f, 0.f, 100.f), FRotator(0.f, Yaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+	UE_LOG(LogHK, Display, TEXT("Car %s was flipped; set back on its wheels"), *GetName());
 }
 
 void AHKCar::HoldIfGroundUnloaded()
