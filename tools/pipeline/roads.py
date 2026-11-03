@@ -456,10 +456,6 @@ def _blend_corridor(base: np.ndarray, total: np.ndarray, count: np.ndarray, spac
     return base * (1.0 - alpha) + target * alpha
 
 
-MINOR_CARVE_CLASSES = {"residential", "living_street", "service"}
-MINOR_SHOULDER_M = 6.0
-
-
 def carve_terrain(height: np.ndarray, roads: list[dict], landscape, log=print) -> np.ndarray:
     """Pull the landscape onto the road design profiles.
 
@@ -472,29 +468,15 @@ def carve_terrain(height: np.ndarray, roads: list[dict], landscape, log=print) -
     spacing = 0.5 * (landscape["spacing_x"] + landscape["spacing_y"])
     carved = height.astype(np.float64)
     tunnels = [r for r in roads if r["mode"] == "tunnel" and len(r["xy"]) > 1]
-    ground_all = [r for r in roads if r["mode"] == "ground" and len(r["xy"]) > 1]
-    ground = [r for r in ground_all if r.get("highway") not in MINOR_CARVE_CLASSES]
-    minor = [r for r in ground_all if r.get("highway") in MINOR_CARVE_CLASSES]
-    log(f"carving tunnels {len(tunnels)} then ground roads {len(ground)} then minor roads {len(minor)}")
-    taken = np.zeros(height.shape, dtype=bool)
+    ground = [r for r in roads if r["mode"] == "ground" and len(r["xy"]) > 1]
+    log(f"carving tunnels {len(tunnels)} then ground roads {len(ground)}")
     if tunnels:
         total, count = rasterise_profiles(height.shape, landscape, tunnels)
         carved = _blend_corridor(carved, total, count, spacing, 28.0)
-        taken |= count > 0
     if ground:
         total, count = rasterise_profiles(height.shape, landscape, ground)
         carved = _blend_corridor(carved, total, count, spacing, 16.0)
-        taken |= count > 0
         log(f"ground corridor nodes {int((count > 0).sum())}")
-    if minor:
-        # Minor roads (residential, service, living street) get a narrow shoulder
-        # and never override a main-road or tunnel corridor, so the many coastal
-        # service roads and piers do not pull the sea floor up or fill trenches.
-        total, count = rasterise_profiles(height.shape, landscape, minor)
-        total = np.where(taken, 0.0, total)
-        count = np.where(taken, 0.0, count)
-        carved = np.where(taken, carved, _blend_corridor(carved, total, count, spacing, MINOR_SHOULDER_M))
-        log(f"minor corridor nodes {int((count > 0).sum())}")
     return carved.astype(np.float32)
 
 
