@@ -3,6 +3,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
@@ -11,6 +12,9 @@ AHKHelicopter::AHKHelicopter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AutoPossessPlayer = EAutoReceiveInput::Disabled;
+	// Only the player drives this; never let an AIController auto-possess it.
+	AutoPossessAI = EAutoPossessAI::Disabled;
+	AIControllerClass = nullptr;
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;
@@ -85,6 +89,15 @@ AHKHelicopter::AHKHelicopter()
 void AHKHelicopter::BeginPlay()
 {
 	Super::BeginPlay();
+	// A pawn placed in a level is auto-possessed by an AIController by default
+	// (APawn::AutoPossessAI = PlacedInWorld). That AI possession marked the vehicle
+	// occupied, so F never found it. Maps baked before this fix still carry the
+	// default, so drop any AI controller here too.
+	if (AController* Existing = GetController(); Existing && !Existing->IsPlayerController())
+	{
+		Existing->UnPossess();
+		Existing->Destroy();
+	}
 	Body->SetSimulatePhysics(true);
 	Body->SetEnableGravity(false);
 	Body->SetMassOverrideInKg(NAME_None, MassKg, true);
@@ -94,6 +107,10 @@ void AHKHelicopter::BeginPlay()
 void AHKHelicopter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
+	if (!NewController || !NewController->IsPlayerController())
+	{
+		return;
+	}
 	bOccupied = true;
 	Body->SetEnableGravity(true);
 	Body->SetSimulatePhysics(true);

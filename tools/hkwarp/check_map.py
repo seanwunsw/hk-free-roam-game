@@ -52,8 +52,17 @@ def sample_dem(tiles, lon, lat):
     return out
 
 
-def measure_harbour(warp, tiles, land_m: float = 1.2) -> list[dict]:
-    """Walk the harbour centreline and measure game-space width between DEM shores."""
+def measure_harbour(warp, tiles, land_m: float = 1.2, is_land=None) -> list[dict]:
+    """Walk the harbour centreline and measure game-space width between shores.
+
+    Shores come from `is_land(lon, lat)` (the OSM coastline mask) when given,
+    otherwise from DEM cells above `land_m`."""
+
+    def land(plon, plat) -> bool:
+        if is_land is not None:
+            return bool(np.asarray(is_land(plon, plat)))
+        return float(sample_dem(tiles, plon, plat)) > land_m
+
     centre = np.asarray(warp.config["harbour_centerline_lonlat"], dtype=np.float64)
     # Densify in lon/lat.
     samples = []
@@ -82,8 +91,7 @@ def measure_harbour(warp, tiles, land_m: float = 1.2) -> list[dict]:
                 px = x + sign * nx * dist
                 py = y + sign * ny * dist
                 plon, plat = warp.real_m_to_lonlat(px, py)
-                elev = float(sample_dem(tiles, plon, plat))
-                if elev > land_m:
+                if land(plon, plat):
                     return dist
             return None
 
@@ -91,7 +99,7 @@ def measure_harbour(warp, tiles, land_m: float = 1.2) -> list[dict]:
         south = find_land(-1.0)
         if north is None or south is None:
             continue
-        if float(sample_dem(tiles, lon, lat)) > land_m:
+        if land(lon, lat):
             continue
         sx, sy = x - nx * south, y - ny * south
         nx_, ny_ = x + nx * north, y + ny * north
@@ -100,6 +108,59 @@ def measure_harbour(warp, tiles, land_m: float = 1.2) -> list[dict]:
         width = math_hypot(float(gx1) - float(gx0), float(gy1) - float(gy0))
         rows.append({"lon": lon, "lat": lat, "real_width_m": north + south, "game_width_m": width})
     return rows
+
+
+# Reference points on each side of Victoria Harbour (TST, Central).
+KOWLOON_LONLAT = (114.172, 22.300)
+ISLAND_LONLAT = (114.160, 22.280)
+
+
+def harbour_clearance(warp, is_land, lon_range=(114.10, 114.26), step=0.00005) -> dict:
+    """Smallest game-space distance between the Kowloon and Hong Kong Island
+    landmasses along Victoria Harbour (Kowloon side between lon_range).
+
+    Unlike the north-south sections this follows the real shoreline in any
+    direction, so diagonal narrows such as Lei Yue Mun are measured honestly.
+    Detached breakwaters and piers that are islands in the mask do not count.
+    """
+    from scipy import ndimage
+    from scipy.spatial import cKDTree
+
+    lons = np.arange(lon_range[0] - 0.02, lon_range[1] + 0.04, step)
+    lats = np.arange(22.24, 22.34, step)
+    lon, lat = np.meshgrid(lons, lats)
+    land = np.asarray(is_land(lon, lat), dtype=bool)
+    labels, _ = ndimage.label(land)
+
+    def label_at(point):
+        r = int(round((point[1] - lats[0]) / step))
+        c = int(round((point[0] - lons[0]) / step))
+        return labels[r, c]
+
+    kow, isl = label_at(KOWLOON_LONLAT), label_at(ISLAND_LONLAT)
+    if kow == 0 or isl == 0 or kow == isl:
+        return {"min_m": None, "note": "Kowloon and Hong Kong Island are not separate land components"}
+
+    def edge(label):
+        region = labels == label
+        rim = region & ~ndimage.binary_erosion(region)
+        sel = rim & (lon >= lon_range[0]) & (lon <= lon_range[1])
+        return lon[sel], lat[sel]
+
+    klon, klat = edge(kow)
+    ilon, ilat = edge(isl)
+    kx, ky = warp.lonlat_to_game_m(klon, klat)
+    ix, iy = warp.lonlat_to_game_m(ilon, ilat)
+    dist, idx = cKDTree(np.column_stack([ix, iy])).query(np.column_stack([kx, ky]))
+    k = int(np.argmin(dist))
+    rk = warp.lonlat_to_real_m(klon[k], klat[k])
+    ri = warp.lonlat_to_real_m(ilon[idx[k]], ilat[idx[k]])
+    return {
+        "min_m": float(dist[k]),
+        "real_m": float(np.hypot(float(rk[0]) - float(ri[0]), float(rk[1]) - float(ri[1]))),
+        "kowloon_lonlat": [float(klon[k]), float(klat[k])],
+        "island_lonlat": [float(ilon[idx[k]]), float(ilat[idx[k]])],
+    }
 
 
 def math_hypot(a: float, b: float) -> float:
@@ -149,7 +210,19 @@ def main() -> int:
     if tiles is None:
         print("DEM missing; harbour width not measured")
         return 1 if failed else 0
-    rows = measure_harbour(warp, tiles)
+    mask_dir = ROOT / "data" / "processed"
+    is_land = None
+    if (mask_dir / "land_mask.json").exists():
+        from tools.pipeline.coast import LandMask
+
+        is_land = LandMask(mask_dir).is_land
+        dem_rows = measure_harbour(warp, tiles)
+        if dem_rows:
+            print(f"(SRTM-only shores, for comparison: min {min(r['game_width_m'] for r in dem_rows):.0f} m over {len(dem_rows)} sections)")
+        print("shores: OSM coastline mask data/processed/land_mask.png")
+    else:
+        print("shores: SRTM > 1.2 m (no land_mask.png yet)")
+    rows = measure_harbour(warp, tiles, is_land=is_land)
     if not rows:
         print("FAIL harbour measurement found no water sections")
         return 1
@@ -163,6 +236,20 @@ def main() -> int:
     if min(widths) < config["min_harbour_width_m"]:
         print("FAIL harbour narrower than minimum")
         failed = True
+    if is_land is not None:
+        clear = harbour_clearance(warp, is_land)
+        if clear["min_m"] is None:
+            print(f"FAIL {clear['note']}")
+            failed = True
+        else:
+            print(
+                f"Kowloon-HK Island clearance min {clear['min_m']:.0f} m game ({clear['real_m']:.0f} m real) "
+                f"between {clear['kowloon_lonlat'][0]:.4f},{clear['kowloon_lonlat'][1]:.4f} and "
+                f"{clear['island_lonlat'][0]:.4f},{clear['island_lonlat'][1]:.4f}"
+            )
+            if clear["min_m"] < config["min_harbour_width_m"]:
+                print("FAIL harbour clearance narrower than minimum")
+                failed = True
     return 1 if failed else 0
 
 

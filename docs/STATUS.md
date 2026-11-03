@@ -94,7 +94,7 @@ C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面�
 ## 數據同刻意限制
 
 - OSM：`https://download.geofabrik.de/asia/china/hong-kong-latest.osm.pbf`（`asia/hong-kong-latest.osm.pbf` 會 404）。© OpenStreetMap contributors，ODbL。
-- 地形：SRTM `N22E113`、`N22E114`，`https://elevation-tiles-prod.s3.amazonaws.com/skadi/N22/`。1.5 米以下當海，負值乘 0.35。密集市區會偏高（灣仔、尖沙咀一類可以有幾十米），呢個係 SRTM，唔係地政總署 DTM。DTM 冇下載：`https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5-digital-terrain-model`。
+- 地形：SRTM `N22E113`、`N22E114`，`https://elevation-tiles-prod.s3.amazonaws.com/skadi/N22/`。1.5 米以下當海，負值乘 0.35，再壓低 2 米（海床至少 −2 米，branch `fix/road-pipeline`）。密集市區會偏高（灣仔、尖沙咀一類可以有幾十米），呢個係 SRTM，唔係地政總署 DTM。DTM 冇下載：`https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5-digital-terrain-model`。
 - 扭曲可分離，見 `ARCHITECTURE.md`。
 - 隧道係明挖，過海變低堤，冇管狀隧道。
 - OSM 內環（天井）填咗。`building:part` 如果更高，可能同主體重疊。
@@ -199,3 +199,219 @@ Sean 部機 pull `46cd1b5` 之後再 build `HKFreeRoamEditor` Win64 Development�
 - 結果：Meshes 4402，failed 0，cars 26，helicopters 5；角色 11/11 動畫 clip retarget 成功；地形 3025x2773。
 - 修正（73d88f2）：Landscape `Import()` 要用空 FGuid 做 key；UE 5.8 Interchange clip 名係 `<檔名><clip>` 冇分隔符。
 - 未測：HLOD 未生成；未入 PIE 試玩；角色朝向同 spring bone 未睇；commandlet 烘焙仍然會 crash；成套 pytest 未喺 box 行（安裝被擋）。
+
+## 道路 pipeline 重做（branch `fix/road-pipeline`，2026-10-29）
+
+全部改動喺 `tools/pipeline`，**冇改 C++**。只喺呢部 box 跑過 Python pipeline 同量度；**未喺 Sean 部 PC 重新烘焙、未入 PIE**。數據用 OSM 261025 snapshot（同之前 commit 嗰份一樣）。
+
+### 改咗乜
+
+| 問題 | 改動 | 檔案 |
+| --- | --- | --- |
+| 平行／重疊嘅路疊埋一齊（雙程路、OSM 重複 way） | 全部路沿線 4 米取樣，按等級／闊度排先後；同 mode（橋再要同 `layer`）、方向差 30° 內、橫向重疊嘅點併入優先嗰條，嗰條加闊（每邊最多 16 米），被併嘅段刪走 | `roads.py` `merge_parallel` |
+| 路面高度同地面唔夾、最近種子點跳來跳去 | 每條路先做平滑設計高度（坡度上限 30%，但永遠夾喺平滑地形 ±3 米內），一次過用加權平均挖入地形（冇「最近一條路贏」）；之後 ribbon 每個頂點都喺 **量化後嘅 r16** 用 Unreal 三角形分法重新取樣 | `roads.py` `set_design_profiles`、`carve_terrain`、`build_ribbon`；`surface.py` |
+| Ribbon 邊唔跟橫向斜度、太粗 | 每段 4 米、橫向 2–4 米一格，每格頂點獨立取樣地面，所以邊跟住橫坡 | `roads.py` `ribbon_grid` |
+| 18% 坡度上限 | 改做 30%，但設計高度唔可以離平滑地形多過 3 米；舊上限喺山路會令路面離地幾十米 | `roads.py` |
+| 橋 | 橋面 = 兩頭地面高度按圖距離淡入（40 米）到淨空（最少 6 米），斜坡尾同地面接；同一 `layer` 嘅橋段先會連埋 | `roads.py` `set_bridge_decks` |
+| 隧道 | 仍然係明挖（冇管道）。地面路橫過明挖坑時改做橋面跨過，唔會畀坑切斷 | `roads.py` `bridge_over_trenches` |
+| 海床 | 海格喺平滑之後再壓到 ≤ −2 米；建築物「喺水入面」嘅門檻跟住移 2 米 | `build_world.py` |
+| 建築物 | 底部用腳印最低一點（唔再浮喺斜坡），屋頂高度唔變 | `build_world.py` `assign_building_z` |
+| 出生點 | 由 `world.json` `player_start` 起計：車同玩家都要企喺最高可行走面，頭頂 4 米內冇路面或建築物；揀唔到就喺附近另揾。屯門玩家喺 `TuenMun_0` 旁邊 3 米 | `spawns.py` |
+| 量度 | `python -m pipeline.check_roads [processed]`（喺 `tools/` 行）：疊路面積、路面同地形高度差（Unreal 三角形）、出生點頭頂幾何 | `check_roads.py` |
+
+### 前後對比（`check_roads.py`，同一份 OSM）
+
+| 指標 | 之前（commit 咗嘅數據） | 之後 |
+| --- | --- | --- |
+| 有兩層或以上路面嘅面積 | 21.6% | 8.1%（差唔多全部係橋喺路上面） |
+| 疊埋而高度差 0.45–4 米（會卡腳／浮） | 9.7% | 0.84% |
+| 地面路同地面路疊埋高度差 > 0.45 米 | 14.0% | 0.0% |
+| 路面離地形 −0.45～+0.45 米（全部路面，唔計離地 > 4 米） | 60.8% | 97.6% |
+| 地面路離地形 ±0.45 米內 | 未分（舊數據冇 mode） | 99.94%（p99 +0.27 米） |
+| 出生點頭頂 4 米內有幾何 | 27 個中 4 個（包括玩家） | 27 個中 0 個 |
+| 出生點喺建築物入面 | 3 個（中環三架車） | 0 |
+| 海格 ≤ −2 米 | 26.5% 嘅格（其餘海喺 −2～0） | 43.6%；−2～0 米剩返 0.09% 嘅格 |
+| 陸上建築物 | 69113 | 69106 |
+| 車 | 26 | 26 |
+| Tile／三角形 | 2461／1.73M | 2462／3.02M（路 ribbon 1.74M） |
+
+`pytest tools/tests`：34 項通過（新 `test_roads.py` 11 項）。`pyflakes tools` 乾淨。報告 `ok: false` 只係因為 box 冇 g++，native warp check 跳過咗；其他檢查都過。
+
+### 未測／要 Sean 部 PC 做
+
+- 要 pull 呢個 branch、`git lfs pull`，再用完整 editor 重新烘焙（同「第一次完整烘焙成功」一樣條命令），開 HKWorld 入 PIE 睇。
+- Unreal Landscape 三角形對角線方向係憑引擎源碼記憶（NW–SE），**未喺 UE 證實**。如果錯咗，路面中間會有最多約一格高度差嘅一半浮起或陷落。
+- 三角形多咗大約 75%（路 ribbon 細格），要睇 FPS。
+- 建築物碰撞仍然係每棟一個凸包（C++，冇改），可能喺窄路變隱形牆。
+- 明挖隧道坑仍然好深；跨坑嘅地面路改咗做橋（286 段）。
+- 海岸線入面大約 0.3 平方公里（以前平滑後高過 1.5 米嘅岸邊格）而家變海；內陸水面由 929 變 868。
+- 南丫島仍然冇車（450 米內冇地面路）。
+
+## 落唔到地 + 小地圖唔似香港（branch `fix/road-pipeline`，2026-10-29）
+
+**全部未喺 UE 測過**：冇編譯、冇烘焙、冇 PIE。下面數字全部嚟自呢部機嘅 Python pipeline 同檢查 script。
+
+### 1. 三角形方向（落唔到地嘅根本原因）
+
+- glTF → UE 個軸換算 `(X, −Z, Y)` 係鏡像，所以每個三角形嘅繞向反轉咗。UE 用 `Cross(P2−P0, P1−P0)` 計面法線，路面 collision 係 ComplexAsSimple 雙面，sweep 嘅 ImpactNormal 係原始面法線，所以路面法線 Z 係負數，低過可行走斜度（Z ≥ 0.643），角色企唔穩、成日喺「跌緊」狀態。
+- `HKBakeLibrary.cpp` `AppendPrim`：而家用 UE 嘅公式計面法線，同 glTF 存落嘅法線對比，相反就調轉 I1/I2。
+- 新加入 import 後檢查：每個 tile mesh 數「面法線 · glTF 法線 ≤ 0」嘅三角形，有就逐個 mesh 出 Warning；烘焙完出一行總數：`HK winding check: N of M tile triangles in K meshes face away from their glTF normals`。正確應該係 **0**。
+- 只有 tile import（建築、路、水）行呢條路。Landscape 係 heightfield；車、直升機、玩家唔經 `AppendPrim`。注意：`BuildChassis` 手砌嘅車身面用 UE 公式計係向下，呢個係舊有，collision 係 None、車用 PhysicsAsset，所以今次冇改。
+
+### 2. Warp v2（小地圖扭曲）
+
+- 舊公式喺維港附近有隨 x 變化嘅 A（fade）同 origin pin，令遠方都有剪切（小地圖見到之字形）。新公式：`Y = H'(y) + A·tanh((y − yc_s(x)) / W)`，A 係常數，遠方只係平移 ±A，冇剪切。`H'` 已經包咗令原點唔郁嘅常數。
+- `yc` 用新嘅 `harbour_yc_lonlat`（向西延長到汲水門／大嶼山東北，向東延長），再做 400 米高斯平滑。
+- 參數：A 700（舊 1100），W 340，`harbour_yc_smooth_m` 400，刪咗 `harbour_fade_m`。比例 knots 冇改。
+- LUT 版本升到 2，`hk_warp.h` 會拒絕舊 v1 檔，所以一定要 `git lfs pull`。
+- 結果：長軸 23420 米，高 18855 米（舊 19655），最細 Jacobian 0.01044，冇摺疊。維港 26 個斷面：最窄 1129 米（鯉魚門），中位 1603，最闊 2614；中環↔尖沙咀 1271 米（舊 1918）。Native warp：正向最大誤差 2.52e-6 米，反向 6.09e-11 度。
+- 代價：A 細咗，維港闊度細咗（但仍然 ≥ 1000 米）。tanh 帶喺穿過陸地嘅位置（大嶼山東北、清水灣）南北方向最多拉長大約 5 倍。
+
+### 3. 自交建築腳印
+
+- 新 warp 之後荃灣 `TsuenWan_0` 架車出現喺建築入面。原因：切路之後嘅腳印抽點會令多邊形自交，三角化後屋頂／牆漏出去路面，但 spawn 嘅點喺多邊形檢查（shapely）判斷唔到。
+- `build_world.py` 加 `repair_rings`：自交嘅腳印用 `make_valid` 取最大嗰塊，再做保留拓撲嘅簡化。今次修咗 213 個，冇刪。
+
+### 檢查（`check_roads.py`，舊數據 → 新數據）
+
+| 指標 | 之前 | 之後 |
+| --- | --- | --- |
+| 路面面積 (m²) | 9,965,322 | 8,901,847 |
+| 重疊 | 8.092% | 7.438% |
+| 間隙 > 0.45 米 | 4.525% | 3.664% |
+| 間隙 0.45–4 米 | 0.837% | 0.801% |
+| 地面路重疊 | 0.0 | 0.0 |
+| 排除 > 4 米，喺台階內 | 97.58% | 97.5% |
+| 地面路喺台階內 | 99.94% | 99.98% |
+| 橋喺台階內 | 3.52% | 3.45% |
+| spawn 頭頂有嘢／喺建築入面／浮空 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+- 玩家 spawn 仍然喺屯門 `TuenMun_0` 旁邊（大約 3 米）。Tile 2386，三角形 2.82M（舊 3.02M）。`pytest tools/tests` 36 項通過。pipeline `ok=True`。
+
+### 未處理／風險
+
+- C++ 未編譯，可能有編譯錯。
+- ~~SRTM 將大部分維港當成陸地~~：已經喺下一節「維港／海岸線」用 OSM 海岸線修正。
+- 上次 PIE log 入面 21 個 NaN bounds tile、InverseFast 誤差同 distance field 問題未處理。
+- 車身手砌面方向（見上面）。
+
+## 維港／海岸線用 OSM 做準（branch `fix/road-pipeline`，2026-10-29）
+
+**全部未喺 UE 編譯、未烘焙、未入 PIE 測試。** 以下數字只係 pipeline 同 Python 檢查嘅結果。
+
+### 做法
+
+- 海陸 mask 改用 OSM `natural=coastline`（1608 條 way），唔再靠 SRTM。新 `tools/pipeline/coast.py`：
+  - 海岸線同 Geofabrik extract 邊界（新檔 `data/config/hong-kong.poly`）一齊 node，再 polygonize；每塊面用海岸線方向（陸地喺左邊）投票決定係陸定海。結果 911 塊（陸 910、海 1、判斷唔到 0），extract 內陸地 1114.0 km²（官方約 1114 km²）。
+  - 海岸線喺 extract 邊（深圳河一帶）開口嘅兩條，靠同 extract 邊界 node 埋處理。
+  - extract 以外（深圳）冇 OSM 海岸線，改用 SRTM > 1.5 米判斷。
+  - 海平面高度嘅 OSM 水面（795 個，例如魚塘、潮汐河道）由陸地扣走，當海。高過海平面嘅水塘保留做內陸水面（881 個）。
+  - 輸出 `data/processed/land_mask.png`（1-bit，北向上，0.0001°）同 `land_mask.json`。
+- 地形：陸地 = max(SRTM × 高度比例, 0.6 米)；海 = min(SRTM 海床 × 0.35, 近岸斜坡)，斜坡由岸邊 −2 米跌到大約 −10 米（120 米衰減）。平滑之後再夾一次（陸 ≥ 0.6，海 ≤ −2）。
+- 明挖隧道（紅隧、西隧、東隧、屯門至赤鱲角）以前會將海床挖高到隧道面，喺維港整咗條「陸橋」（紅磡↔銅鑼灣最高 18.4 米）。而家：
+  - 新 `roads.deck_over_sea`：地面路同隧道經過離岸超過 2 格（約 16 米）嘅海，改成固定高度嘅低橋面（設計高度 + 路面抬高），今次 20 段。
+  - 挖地形之後，離岸超過 2 格嘅海格唔准高過原本海床。
+- 地面路取樣低過 0.6 米嘅抬到 0.6 米（1806 個）。
+- 小地圖嘅海色跟 mask；內陸水面另外填色。
+- Warp：`harbour_centerline_lonlat` 同 `harbour_yc_lonlat` 改用 OSM mask 量出嚟嘅航道中線（舊點喺中環／尖沙咀同鯉魚門偏咗大約 400 米）。A=700、W=340、平滑 400 冇改。
+
+### 海陸吻合度（extract 內，`python -m tools.pipeline.check_coast`）
+
+| 指標 | 之前（`9c84ded` 地形） | 之後 |
+| --- | --- | --- |
+| OSM 海嘅頂點低過 0 米 | 72.71% | 99.69% |
+| OSM 海嘅頂點 ≤ −2 米 | 72.64% | 99.63% |
+| OSM 陸嘅頂點高過 0 米 | 98.08% | 99.85% |
+| 總吻合 | 83.38% | 99.76% |
+
+- 上面係 raster 檢查（最近格）。pipeline 用多邊形逐點計：海 < 0 米 99.805%，≤ −2 米 99.743%，陸 > 0 米 100%，吻合 99.887%。
+- 剩低嘅主要係岸邊 2 格內（路肩、海堤）同 mask 像素邊界。
+- 新測試 `tools/tests/test_coast.py`：開口海岸線、反轉方向、extract 外用 DEM、吻合度計數、隧道過海變橋面；另外有一個對 processed 數據嘅整合測試（中環、尖沙咀、紅磡係陸，維港中間係海，九龍↔港島距離 ≥ 1000 米）。
+
+### 維港闊度
+
+- 九龍↔港島最近距離（新指標 `harbour_clearance`）：遊戲 1085 米（真實 427 米，鯉魚門）。最低要求 1000 米，只係多 85 米。
+- 142 個斷面：最窄 1328 米，中位 2198 米，最闊 3543 米。（只用 SRTM 海岸嘅比較：最窄 1102 米。）
+
+### 其他檢查
+
+- pipeline exit 0，`ok=True`，長軸 23420 米，tile 2373，三角形 2.82M。spawn 冇一個喺海上；玩家仍然喺屯門 `TuenMun_0`。建築物喺陸上 71966，喺水入面刪咗 37。
+- `check_roads.py`（上次 → 今次）：
+
+| 指標 | 上次 | 今次 |
+| --- | --- | --- |
+| 路面面積 (m²) | 8,901,847 | 8,857,045 |
+| 重疊 | 7.438% | 7.435% |
+| 間隙 > 0.45 米 | 3.664% | 3.651% |
+| 間隙 > 1 米 | 3.468% | 3.452% |
+| 間隙 0.45–4 米 | 0.801% | 0.799% |
+| 地面路重疊 | 0.0 | 0.0 |
+| 排除 > 4 米，喺台階內 | 97.5% | 97.4% |
+| 地面路喺台階內 | 99.98% | 99.98% |
+| 橋喺台階內 | 3.45% | 3.28% |
+| spawn 頭頂有嘢／喺建築入面／浮空 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+- 隧道面積少咗大約 15.3 萬 m²，橋面多咗大約 14.6 萬 m²（過海隧道變咗低橋面）。地面路少咗大約 4 萬 m²，相信係因為 warp 中線改咗。
+- 海上嘅路頂點：橋 31647 個，低過 +0.3 米嘅只有 82 個（引橋尾）；地面 135 個、隧道 2 個仲貼住海床（岸邊）。青馬、昂船洲等橋面仍然喺水面以上（最高 41.6 米）。
+- `check_map`：通過。`pytest tools/tests` 42 項通過。pyflakes 冇錯。
+
+### 未處理／風險
+
+- **未喺 UE 試過**：Landscape 海床、水面、低橋面碰撞、小地圖全部未睇過。
+- 過海隧道而家係貼水面嘅低橋（揸車會喺海面上行），唔係真隧道。
+- 近岸海床斜坡係人造，唔係真實水深。
+- 魚塘、潮汐河道（例如元朗、南生圍）而家當海。
+- 深圳一邊仍然靠 SRTM。
+- 鯉魚門只係多 85 米先到 1000 米下限。
+- 上次 PIE log 嘅 NaN bounds tile、InverseFast 誤差、distance field 問題仍然未處理。
+
+## 路網坡度解法 + 短橋淨空 + 撳 F 上唔到車（branch `fix/road-pipeline`，2026-11-03）
+
+### 改咗乜
+
+- **路網坡度解法（`tools/pipeline/road_graph.py`）**：路口而家係共用頂點，所有接入嘅路喺路口用同一個高度。坡度用 A/B 兩邊 Dijkstra 限制。橋過冇相連嘅低路時有硬下限（低路 +5.5 米），隧道都有硬下限。±3 米貼地限制保留。舊嘅 `limit_grade`／`set_design_profiles` 同臨時 `HK_LEGACY_ROADS` 開關已經刪咗。
+- **短橋淨空**：橋頭 fade 長度 = min(40 米, 橋長/3)。共用頂點取所有相連橋嘅最大值，所以短橋中間都有足夠淨空。
+- **`merge_parallel` bug**：之前太短而冇輸出嘅段仍然當係「仲在」，之後嘅路被吸入一段唔存在嘅路，所以路中間有一格（3.5–4.8 米）綠色缺口。屯門 `TuenMun_0` 附近見到。已修正，並加咗測試。
+- **車 spawn**：車貼最終路中線，泊喺左線（香港靠左行），車頭方向跟路。避開路口範圍（路口半闊 + 4.5 米內有 >20° 嘅路就唔用）。玩家喺第一架車旁邊 3 米（先試路邊／行人路一邊）。
+- **`check_roads` 新指標 `spawn_lanes`**：每架車離中線距離、方向誤差、車身係咪全部喺路面。資料喺 `data/processed/spawn_roads.json`。
+- **撳 F 上唔到車（C++，要重新 build）**：根本原因係 `APawn` 預設 `AutoPossessAI = PlacedInWorld`，`AIControllerClass = AAIController`。烘焙出嚟嘅車同直升機係「放喺地圖」，開波時自動被 AIController 附身，觸發 `PossessedBy`，`bOccupied = true`。`FindRide` 會跳過有人坐嘅車，所以撳 F 搵唔到車。同時因為 `bOccupied` 而冇 `Park()`，手掣冇拉，車可能自己溜走（可能就係車唔喺路上嘅原因）。修正：`HKCar`／`HKHelicopter` 建構時設 `AutoPossessAI = Disabled`、`AIControllerClass = nullptr`；`BeginPlay` 如果見到非玩家 controller 就 `UnPossess` 同刪走（舊地圖都有效）；`PossessedBy` 只對玩家 controller 設 `bOccupied`。
+
+### 呢部機實際跑過
+
+- pipeline exit 0，`ok=True`，tile 2371，三角形 2.83M。
+- `check_roads`、`check_map`、`check_coast` 全部通過；`pytest tools/tests` 54 項通過；pyflakes 冇錯。
+- 指標（`552e590` → 舊解法 → 今次）：
+
+| 指標 | 552e590 | 舊解法 | 今次 |
+| --- | --- | --- | --- |
+| 設計高度路口差 最大 | – | 17.18 米 | 0 |
+| 設計高度路口差 >50 厘米 | – | 57.5% | 0% |
+| 路面路口差（地面）最大／>50 厘米 | – | – | 2.37 米／0.77% |
+| 路面坡度超標（地面） | – | 4.21% | 3.07% |
+| 橋淨空 最小 | – | −13.5 米 | 5.26 米 |
+| 橋淨空 <4 米 | – | 19.2% | 0% |
+| 間隙 0.45–4 米 | 0.799% | 0.808% | 0.517% |
+| 排除 >4 米，喺台階內 | 97.4% | 97.4% | 98.49% |
+| 地面路喺台階內 | 99.98% | 99.98% | 99.99% |
+| 車方向誤差最大 | – | 89.8° | 0.24° |
+| 車身出咗路面 | – | – | 0 |
+| 玩家離第一架車 | – | – | 3.0 米 |
+
+- 對比圖：`/workspace/hk-perf/tuenmun_compare.png`（真 OSM／遊戲 tile／`TuenMun_0` 90 米近鏡）。
+
+### 屯門仲差乜（影響由大到細）
+
+1. 路中間一格缺口 —— 已修正。
+2. warp 將屯門壓到東西 ×0.30、南北 ×0.50，但路闊有固定下限（雙線 ≥8 米），所以路同路之間擠埋，雙程路併成 20 米闊嘅灰色一大片。要改路闊跟 warp 或者改 warp 比例（設計決定，未做）。
+3. `M_Road` 材質：黃邊線太粗（闊度 8%）、每條路都有黃色中間虛線（單程路都有），而且穿過路口。建議改白色分線、邊線用米計、路口唔畫線（要改 C++／材質，未做）。
+4. 路口冇填補，路尾方角留低三角形空位。建議做路口多邊形（中等工作量）。
+5. 住宅路、服務路、行人路、樓梯全部冇，所以冇行人路同路邊石。建議喺路邊加行人路帶。
+6. 建築物稀疏、對比低。
+7. 冇讀 OSM `oneway`（呢區有 493 條單程主要路），影響分線同泊車邊。
+
+### 未測試／風險
+
+- **全部未喺 UE 試過**：C++ 改動未 build、未 PIE；撳 F 上車、車唔溜、玩家落地位置都要喺 Sean 部 PC 驗證。
+- 保留 ±3 米限制，所以設計坡度超標比舊解法略高（1.82% vs 1.29%）。
+- 路面路口差（全部，連橋）最大仍有 28.6 米，係橋同地面路嘅接觸位，未處理。
+- 車泊喺左線係按「車頭方向嘅左邊」，冇讀 `oneway`，單程路可能泊錯邊。
