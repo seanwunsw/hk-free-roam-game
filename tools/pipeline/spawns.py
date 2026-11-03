@@ -226,10 +226,10 @@ def build_spawns(config, warp, roads: list[dict], index: SurfaceIndex, find_pad,
         x, y = road["xy"][i] + left * lane_offset(r, i)
         if in_junction(r, float(x), float(y), yaw):
             return None
-        # The nearest centreline must be this road (or one running the same way),
-        # otherwise the spot is where pieces overlap.
+        # The nearest centreline point must belong to this road, otherwise the
+        # spot is where pieces overlap or run side by side.
         _, j = tree.query([x, y])
-        if owner[j] != r and abs(float(all_tan[j] @ t)) < math.cos(math.radians(10.0)):
+        if owner[j] != r:
             return None
         z, on_road = index.top_surface(x, y, near_z=float(road["center"][i, 2]))
         if not on_road:

@@ -23,7 +23,7 @@ FILL_BELOW_M = 0.05
 KERB_M = 0.15
 PAVEMENT_M = 1.5
 WALK_LIFT_M = 0.06
-WALK_STEP_M = 8.0
+WALK_STEP_M = 10.0
 PAVE_CLASSES = {"primary", "secondary", "tertiary", "primary_link", "secondary_link", "tertiary_link", "residential", "living_street"}
 
 
@@ -214,7 +214,7 @@ class Blockers:
 
 DECIMATE_XY_M = 0.15
 DECIMATE_Z_M = 0.06
-DECIMATE_MAX_M = 24.0
+DECIMATE_MAX_M = 40.0
 
 
 def _decimate_run(rows: np.ndarray, z: np.ndarray, along: np.ndarray) -> list[int]:

@@ -100,6 +100,9 @@ ROAD_DRAW = {
     "tertiary": (110, 108, 100),
     "tertiary_link": (120, 116, 108),
     "unclassified": (130, 128, 120),
+    "residential": (138, 136, 128),
+    "living_street": (142, 140, 132),
+    "service": (150, 148, 142),
 }
 
 
