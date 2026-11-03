@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "seconds": 165.2,
+  "seconds": 182.1,
   "extent": {
     "min_x_m": -12193.275570889611,
     "max_x_m": 11226.224534466013,
@@ -34,11 +34,73 @@
     "vertices": 6876622,
     "osm_sea_vertices": 3984386,
     "osm_land_vertices": 2892236,
-    "sea_below_0_pct": 99.805,
+    "sea_below_0_pct": 99.804,
     "sea_below_seabed_pct": 99.743,
     "land_above_0_pct": 100.0,
-    "agree_pct": 99.887,
+    "agree_pct": 99.886,
     "spawns_over_sea": []
+  },
+  "road_heights": {
+    "graph": {
+      "vertices": 260210,
+      "junction_vertices": 20949,
+      "contact_edges": 8695,
+      "max_grade_violation_m": 30.135243218437363,
+      "edges_over_grade_pct": 1.7937609300814727,
+      "clamped_pct": 7.618462011452289
+    },
+    "design_junction_spread": {
+      "junctions": 12556,
+      "max_m": 0.0,
+      "p99_m": 0.0,
+      "over_5cm_pct": 0.0,
+      "over_50cm_pct": 0.0
+    },
+    "design_grade": {
+      "length_km": 931.229170289786,
+      "over_limit_pct": 1.8208037541122921,
+      "max_grade": 1.8184979894214592
+    },
+    "bridge_decks": {
+      "bridge_pieces": 2546,
+      "raised_over_crossings": 160,
+      "max_raise_m": 22.77828960006134
+    },
+    "ribbon_junction_spread": {
+      "junctions": 14706,
+      "max_m": 28.59920664334306,
+      "p99_m": 6.842944242457461,
+      "over_5cm_pct": 26.83938528491772,
+      "over_50cm_pct": 8.275533795729634
+    },
+    "ribbon_junction_spread_ground": {
+      "junctions": 12272,
+      "max_m": 2.374494177501031,
+      "p99_m": 0.44734403588551064,
+      "over_5cm_pct": 17.902542372881356,
+      "over_50cm_pct": 0.7659713168187744
+    },
+    "ribbon_grade_ground": {
+      "length_km": 925.5535371185221,
+      "over_limit_pct": 3.072492990348036,
+      "max_grade": 1.4678097906702932
+    },
+    "bridge_clearance": {
+      "crossings": 1158,
+      "min_m": 5.262868352477552,
+      "p05_m": 5.499999999000002,
+      "median_m": 7.086662288350413,
+      "under_4m_pct": 0.0,
+      "under_5_5m_pct": 0.6044905008635579
+    },
+    "spawn_lanes": {
+      "cars": 26,
+      "unmeasured": 0,
+      "max_centerline_m": 3.2,
+      "max_heading_err_deg": 0.24,
+      "body_off_ribbon": 0,
+      "player_to_first_car_m": 3.0
+    }
   },
   "harbour_game_width_m": {
     "sections": 142,
@@ -201,13 +263,13 @@
   "counts": {
     "osm_buildings": 119432,
     "osm_roads": 35961,
-    "buildings": 71966,
-    "roads": 22295,
-    "bridges": 2814,
-    "tunnels_open_cut": 149,
-    "water": 881,
-    "tiles": 2373,
-    "triangles": 2820879
+    "buildings": 71955,
+    "roads": 22317,
+    "bridges": 2792,
+    "tunnels_open_cut": 150,
+    "water": 882,
+    "tiles": 2371,
+    "triangles": 2826792
   },
   "landscape": {
     "verts_x": 3025,

@@ -39,6 +39,7 @@ from tools.pipeline.geometry import (
 )
 from tools.pipeline.glbutil import write_glb
 from tools.pipeline import coast as coastmask
+from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
 from tools.pipeline import spawns as spawn_rules
 from tools.pipeline.surface import quantize_r16, sample_ue
@@ -632,15 +633,15 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
     log(f"preparing {len(extracted['roads'])} roads")
     prepared = []
     wet_samples = 0
-    for road in extracted["roads"]:
+    junctions = road_graph.junction_keys([road["ll"] for road in extracted["roads"]])
+    for road, jkeys in zip(extracted["roads"], junctions):
         ll = road["ll"]
         gx, gy = warp.lonlat_to_game_m(ll[:, 0], ll[:, 1])
-        xy = np.column_stack([gx, gy])
-        if len(xy) > 8:
-            xy = douglas_peucker(xy, 2.5)
-        xy = roadnet.resample(xy, roadnet.STEP_M)
-        if len(xy) < 2:
+        # Junction nodes stay exact samples so every way through them shares one vertex.
+        resampled = road_graph.pinned_resample(np.column_stack([gx, gy]), jkeys, roadnet.STEP_M, 2.5)
+        if resampled is None:
             continue
+        xy, keys = resampled
         min_xy = xy.min(axis=0)
         max_xy = xy.max(axis=0)
         if max_xy[0] < landscape["min_x"] or min_xy[0] > landscape["max_x"]:
@@ -663,7 +664,7 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
             wet = terrain_z < LAND_MIN_M
             wet_samples += int(wet.sum())
             terrain_z = np.where(wet, LAND_MIN_M, terrain_z)
-        prepared.append(roadnet.make_road(xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal))
+        prepared.append(roadnet.make_road(xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal, keys))
     tunnels = sum(1 for road in prepared if road["mode"] == "tunnel")
     bridges = sum(1 for road in prepared if road["mode"] == "bridge")
     log(f"roads kept {len(prepared)}  bridges {bridges}  open-cut tunnels {tunnels}  ground samples lifted to shore {wet_samples}")
@@ -1302,7 +1303,12 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     height, is_land = build_terrain(warp, grids, landscape, log, land, extract)
     roads = prepare_roads(warp, extracted, height, landscape, log)
     roads = roadnet.merge_parallel(roads, log)
-    roadnet.set_design_profiles(roads)
+    graph_stats = road_graph.solve_design_profiles(roads, log)
+    road_stats = {
+        "graph": graph_stats,
+        "design_junction_spread": road_graph.junction_spread(roads, "design"),
+        "design_grade": road_graph.grade_stats(roads, "design"),
+    }
     roads = roadnet.bridge_over_trenches(roads, log)
     open_sea = _open_sea_grid(is_land, landscape)
 
@@ -1323,7 +1329,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     def surface_at(xs, ys):
         return sample_ue(stored, landscape["min_x"], landscape["min_y"], landscape["spacing_x"], landscape["spacing_y"], xs, ys)
 
-    roadnet.set_bridge_decks(roads, surface_at)
+    road_stats["bridge_decks"] = roadnet.set_bridge_decks(roads, surface_at, log)
     ribbons = []
     for road in roads:
         rib = roadnet.build_ribbon(road, surface_at)
@@ -1336,6 +1342,11 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         road["center"] = np.column_stack([road["xy"], mid])
         road["width"] = float(np.max(road["hl"] + road["hr"]))
     roads = [road for road in roads if "center" in road]
+    road_stats["ribbon_junction_spread"] = road_graph.junction_spread(roads, "center", ("ground", "tunnel", "bridge"))
+    road_stats["ribbon_junction_spread_ground"] = road_graph.junction_spread(roads, "center", ("ground",))
+    road_stats["ribbon_grade_ground"] = road_graph.grade_stats(roads, "center")
+    road_stats["bridge_clearance"] = roadnet.bridge_clearance_report(roads)
+    log(f"road stats {json.dumps(road_stats)}")
     log(f"road ribbons {len(ribbons)}  triangles {sum(len(r['tris']) for r in ribbons)}")
     buffers, tree = _road_buffers(roads, log)
     buildings = cut_buildings(buildings, buffers, tree, log)
@@ -1356,6 +1367,11 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     spawns, landmarks, notes = spawn_rules.build_spawns(
         config, warp, roads, index, lambda x, y: _find_pad(x, y, stored, landscape), log
     )
+    spawn_roads = spawn_rules.nearby_centerlines(roads, spawns)
+    road_stats["spawn_lanes"] = {
+        k: v for k, v in spawn_rules.spawn_lane_report(spawns, spawn_roads).items() if k != "detail"
+    }
+    log(f"spawn lanes {json.dumps(road_stats['spawn_lanes'])}")
     minimap = _draw_minimap(out / "minimap.png", height, landscape, roads, landmarks["places"], is_land, waters)
     mask = write_land_mask(out, config, land, extract, grids, log)
     dem = load_dem()
@@ -1378,11 +1394,13 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         "tiles": mesh_info["tiles"],
         "triangles": mesh_info["triangles"],
         "spawns": spawns,
+        "spawn_roads": spawn_roads,
         "landmarks": landmarks,
         "minimap": minimap,
         "previews": previews,
         "harbour": harbour_rows,
         "coast": coast_stats,
+        "road_heights": road_stats,
         "notes": notes,
         "counts": {
             "osm_buildings": len(extracted["buildings_ll"]),
@@ -1400,6 +1418,8 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
 
 def write_outputs(out: Path, config, warp, built: dict, native: dict, started: float, log: Log) -> dict:
     (out / "spawns.json").write_text(json.dumps(built["spawns"], indent=2), encoding="utf-8")
+    # Final ground centrelines near the spawns, for check_roads' spawn lane metric.
+    (out / "spawn_roads.json").write_text(json.dumps(built.get("spawn_roads") or []), encoding="utf-8")
     (out / "landmarks.json").write_text(json.dumps(built["landmarks"], ensure_ascii=False, indent=2), encoding="utf-8")
     landscape = built["landscape"]
     harbour = built.get("harbour") or []
@@ -1454,6 +1474,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "extent": extent,
         "long_axis_m": long_axis,
         "coast": built.get("coast"),
+        "road_heights": built.get("road_heights"),
         "harbour_game_width_m": {
             "sections": len(widths),
             "min": min_harbour,

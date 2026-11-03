@@ -117,6 +117,12 @@ class SurfaceIndex:
         return True
 
 
+CAR_HALF_WIDTH_M = 1.0
+PLAYER_GAP_M = 3.0
+# Car half-length 2.3 m plus margin and the 4 m sample spacing.
+JUNCTION_CLEAR_M = 4.5
+
+
 def _footprint(x: float, y: float, yaw_deg: float, half_len: float, half_wid: float) -> np.ndarray:
     t = np.array([math.cos(math.radians(yaw_deg)), math.sin(math.radians(yaw_deg))])
     n = np.array([-t[1], t[0]])
@@ -134,37 +140,64 @@ def build_spawns(config, warp, roads: list[dict], index: SurfaceIndex, find_pad,
     local = np.concatenate([np.arange(len(r["xy"])) for r in ground])
     tree = cKDTree(pts)
     tans = [tangents(r["xy"]) for r in ground]
+    all_tan = np.concatenate(tans)
+    all_half = np.concatenate([np.maximum(r["hl"], r["hr"]) for r in ground])
+
+    def in_junction(r: int, x: float, y: float, yaw: float) -> bool:
+        """True when another road crossing at an angle passes within its half-width
+        plus JUNCTION_CLEAR_M of (x, y): the spot is inside a junction box."""
+        heading = np.array([math.cos(math.radians(yaw)), math.sin(math.radians(yaw))])
+        for j in tree.query_ball_point([x, y], float(all_half.max()) + JUNCTION_CLEAR_M):
+            if owner[j] == r or abs(float(all_tan[j] @ heading)) > math.cos(math.radians(20.0)):
+                continue
+            if math.hypot(pts[j, 0] - x, pts[j, 1] - y) < all_half[j] + JUNCTION_CLEAR_M:
+                return True
+        return False
 
     def yaw_at(r: int, i: int) -> float:
         t = tans[r][i]
         return math.degrees(math.atan2(t[1], t[0]))
 
+    def lane_offset(r: int, i: int) -> float:
+        """Left-of-heading offset of the car from the centreline.
+
+        Hong Kong drives on the left, so a parked car sits in the left lane: half the
+        left half-width, kept at least CAR_HALF_WIDTH_M + 0.2 m inside the ribbon edge.
+        Narrow roads (one lane) keep the car on the centreline.
+        """
+        hl = float(ground[r]["hl"][i])
+        return max(0.0, min(0.5 * hl, hl - CAR_HALF_WIDTH_M - 0.2))
+
     def car_spot(r: int, i: int):
         road = ground[r]
-        x, y = road["xy"][i]
         yaw = yaw_at(r, i)
+        t = tans[r][i]
+        left = np.array([-t[1], t[0]])
+        x, y = road["xy"][i] + left * lane_offset(r, i)
+        if in_junction(r, float(x), float(y), yaw):
+            return None
         z, on_road = index.top_surface(x, y, near_z=float(road["center"][i, 2]))
         if not on_road:
             return None
-        if not index.clear(_footprint(x, y, yaw, 2.3, 1.0), z):
+        if not index.clear(_footprint(x, y, yaw, 2.3, CAR_HALF_WIDTH_M), z):
             return None
         return float(x), float(y), z, yaw
 
     def player_spot(r: int, i: int):
+        """A spot PLAYER_GAP_M beside the car, kerb side (left) first, on the road edge
+        or the level ground just past it, never inside the car footprint."""
         road = ground[r]
-        x, y = road["xy"][i]
         yaw = yaw_at(r, i)
         t = tans[r][i]
-        right = np.array([t[1], -t[0]])
-        options = []
-        if road["hr"][i] >= 2.2:
-            options.append(np.array([x, y]) + right * min(3.0, road["hr"][i] - 0.8))
-        if road["hl"][i] >= 2.2:
-            options.append(np.array([x, y]) - right * min(3.0, road["hl"][i] - 0.8))
-        options.append(np.array([x, y]) - t * 6.0)
-        for px, py in options:
-            z, on_road = index.top_surface(px, py, near_z=float(road["center"][i, 2]) + 0.5)
-            if not on_road:
+        left = np.array([-t[1], t[0]])
+        base = road["xy"][i]
+        road_z = float(road["center"][i, 2])
+        off = lane_offset(r, i)
+        options = [left * (off + PLAYER_GAP_M), -left * (PLAYER_GAP_M - off)]
+        for delta in options:
+            px, py = base + delta
+            z, on_road = index.top_surface(px, py, near_z=road_z + 0.5)
+            if not on_road and abs(z - road_z) > 0.6:
                 continue
             if index.clear(_footprint(px, py, yaw, 0.35, 0.35), z):
                 return float(px), float(py), z, yaw
@@ -260,3 +293,79 @@ def build_spawns(config, warp, roads: list[dict], index: SurfaceIndex, find_pad,
         log("spawn note: " + note)
     spawns = {"player": player, "cars": cars, "helicopters": helicopters, "helipads": helipads}
     return spawns, {"places": places}, notes
+
+
+def nearby_centerlines(roads: list[dict], spawns: dict, radius_m: float = 60.0) -> list[dict]:
+    """Final (warped, merged) ground road centrelines within radius_m of any car or the
+    player, so check_roads can measure spawn placement without the whole road set."""
+    points = [spawns["player"]] if spawns.get("player") else []
+    points += spawns.get("cars", [])
+    if not points:
+        return []
+    tree = cKDTree(np.array([[p["x_m"], p["y_m"]] for p in points]))
+    out = []
+    for road in roads:
+        if road["mode"] != "ground" or len(road["xy"]) < 2:
+            continue
+        near = tree.query_ball_point(road["xy"], radius_m)
+        if not any(len(n) for n in near):
+            continue
+        out.append({
+            "xy": np.round(road["xy"], 3).tolist(),
+            "hl": np.round(road["hl"], 3).tolist(),
+            "hr": np.round(road["hr"], 3).tolist(),
+        })
+    return out
+
+
+def spawn_lane_report(spawns: dict, centerlines: list[dict]) -> dict:
+    """Per car: distance to the nearest ground centreline segment, heading error to that
+    segment (folded to 0-90 degrees, since either travel direction is a valid lane), the
+    signed lateral offset (+ left), and whether the 2.0 m wide car body fits on the ribbon.
+    Also the player's distance to the first car."""
+    segs = []
+    for line in centerlines:
+        xy = np.asarray(line["xy"], dtype=float)
+        hl = np.asarray(line["hl"], dtype=float)
+        hr = np.asarray(line["hr"], dtype=float)
+        for k in range(len(xy) - 1):
+            segs.append((xy[k], xy[k + 1], 0.5 * (hl[k] + hl[k + 1]), 0.5 * (hr[k] + hr[k + 1])))
+    cars = []
+    for car in spawns.get("cars", []):
+        p = np.array([car["x_m"], car["y_m"]])
+        best = None
+        for a, b, hl, hr in segs:
+            d = b - a
+            length = float(np.hypot(*d))
+            if length < 1e-6:
+                continue
+            u = float(np.clip(np.dot(p - a, d) / (length * length), 0.0, 1.0))
+            q = a + u * d
+            dist = float(np.hypot(*(p - q)))
+            if best is None or dist < best[0]:
+                side = float(d[0] * (p - a)[1] - d[1] * (p - a)[0]) / length
+                best = (dist, d / length, side, hl, hr)
+        if best is None:
+            cars.append({"id": car["id"], "centerline_m": None})
+            continue
+        dist, tan, side, hl, hr = best
+        yaw = math.radians(car["yaw_deg"])
+        err = math.degrees(math.acos(min(1.0, abs(math.cos(yaw) * tan[0] + math.sin(yaw) * tan[1]))))
+        fits = (side + CAR_HALF_WIDTH_M <= hl + 0.05) and (-side + CAR_HALF_WIDTH_M <= hr + 0.05)
+        cars.append({"id": car["id"], "centerline_m": round(dist, 3), "lateral_left_m": round(side, 3),
+                     "heading_err_deg": round(err, 2), "body_on_ribbon": bool(fits)})
+    measured = [c for c in cars if c.get("centerline_m") is not None]
+    player = spawns.get("player")
+    first = next((c for c in spawns.get("cars", []) if c["id"].endswith("_0") and player and c["place"] == player["id"]), None)
+    gap = None
+    if player and first:
+        gap = round(math.hypot(player["x_m"] - first["x_m"], player["y_m"] - first["y_m"]), 3)
+    return {
+        "cars": len(cars),
+        "unmeasured": len(cars) - len(measured),
+        "max_centerline_m": max((c["centerline_m"] for c in measured), default=None),
+        "max_heading_err_deg": max((c["heading_err_deg"] for c in measured), default=None),
+        "body_off_ribbon": sum(1 for c in measured if not c["body_on_ribbon"]),
+        "player_to_first_car_m": gap,
+        "detail": cars,
+    }

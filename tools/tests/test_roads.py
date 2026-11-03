@@ -154,3 +154,68 @@ def test_spawn_index_sees_overhead_deck():
     assert on_road and abs(z - rn.ground_lift("primary")) < 1e-6
     assert not index.clear(np.array([[0.0, 0.0]]), z)
     assert index.clear(np.array([[0.0, 0.0]]), 3.1)
+
+
+def test_car_spawns_in_left_lane_with_player_beside_it():
+    from tools.pipeline.spawns import build_spawns, nearby_centerlines, spawn_lane_report
+
+    flat = lambda x, y: np.zeros(np.shape(x))  # noqa: E731
+    road = _road(_line(-80, 0, 80, 0))
+    road["center"] = np.column_stack([road["xy"], np.full(len(road["xy"]), rn.ground_lift("primary"))])
+    index = SurfaceIndex([rn.build_ribbon(road, flat)], [], flat)
+
+    class Warp:
+        def lonlat_to_game_m(self, lon, lat):
+            return lon, lat
+
+    config = {"places": [{"id": "A", "lon": 0.0, "lat": 0.0, "player_start": True, "cars": 1}]}
+    spawns, _, _ = build_spawns(config, Warp(), [road], index, lambda x, y: (x, y, 0.0), log=lambda *_: None)
+    car = spawns["cars"][0]
+    hl = float(road["hl"][0])
+    # Drawn west to east: the left lane is north of the centreline, heading east.
+    assert abs(car["yaw_deg"]) < 1e-6
+    assert car["y_m"] > 0.5 and car["y_m"] + 1.0 <= hl + 1e-6
+    player = spawns["player"]
+    assert abs(np.hypot(player["x_m"] - car["x_m"], player["y_m"] - car["y_m"]) - 3.0) < 1e-6
+    report = spawn_lane_report(spawns, nearby_centerlines([road], spawns))
+    assert report["body_off_ribbon"] == 0 and report["max_heading_err_deg"] < 1e-6
+    assert abs(report["max_centerline_m"] - car["y_m"]) < 1e-6
+    assert abs(report["player_to_first_car_m"] - 3.0) < 1e-6
+
+
+def test_car_spawn_avoids_junction_box():
+    from tools.pipeline.spawns import JUNCTION_CLEAR_M, build_spawns
+
+    flat = lambda x, y: np.zeros(np.shape(x))  # noqa: E731
+    main = _road(_line(-80, 0, 80, 0))
+    side = _road(_line(0, 0, 0, 80))
+    for r in (main, side):
+        r["center"] = np.column_stack([r["xy"], np.full(len(r["xy"]), rn.ground_lift("primary"))])
+    index = SurfaceIndex([rn.build_ribbon(main, flat), rn.build_ribbon(side, flat)], [], flat)
+
+    class Warp:
+        def lonlat_to_game_m(self, lon, lat):
+            return lon, lat
+
+    config = {"places": [{"id": "A", "lon": 0.0, "lat": 1.0, "player_start": True, "cars": 1}]}
+    spawns, _, _ = build_spawns(config, Warp(), [main, side], index, lambda x, y: (x, y, 0.0), log=lambda *_: None)
+    car = spawns["cars"][0]
+    # Not inside the crossing: clear of the other road's ribbon by the junction margin.
+    if abs(car["yaw_deg"]) < 45 or abs(abs(car["yaw_deg"]) - 180) < 45:
+        assert abs(car["x_m"]) >= float(side["hl"][0]) + JUNCTION_CLEAR_M - 4.0
+    else:
+        assert car["y_m"] >= float(main["hl"][0]) + JUNCTION_CLEAR_M - 4.0
+
+
+def test_merge_parallel_never_absorbs_into_a_dropped_piece():
+    # A 5 m primary stub is too short to emit a ribbon. The secondary running
+    # under it must keep its own ribbon there instead of vanishing.
+    stub = _road(np.array([[0.0, 0.0], [5.0, 0.0]]), highway="primary")
+    long_way = _road(_line(-60, 0.5, 60, 0.5), highway="secondary")
+    out = rn.merge_parallel([stub, long_way], log=lambda *_: None)
+    spans = sorted((float(r["xy"][:, 0].min()), float(r["xy"][:, 0].max())) for r in out if r["highway"] == "secondary")
+    reach = spans[0][1]
+    for lo, hi in spans[1:]:
+        assert lo <= reach + 1e-6, (lo, reach)
+        reach = max(reach, hi)
+    assert spans[0][0] <= -60 + 1e-6 and reach >= 60 - 1e-6

@@ -331,6 +331,11 @@ def main(argv: list[str] | None = None) -> int:
     spawn_path = Path(args.spawns) if args.spawns else processed / "spawns.json"
     if spawn_path.exists():
         out["spawns"] = analyse_spawns(processed, manifest, json.loads(spawn_path.read_text()), terrain)
+        lanes_path = processed / "spawn_roads.json"
+        if lanes_path.exists():
+            from tools.pipeline.spawns import spawn_lane_report
+
+            out["spawn_lanes"] = spawn_lane_report(json.loads(spawn_path.read_text()), json.loads(lanes_path.read_text()))
     text = json.dumps(out, indent=2)
     print(text)
     if args.json:

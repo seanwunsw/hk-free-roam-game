@@ -4,7 +4,7 @@ lift bridges, and build ribbon meshes that sit on the carved landscape.
 Order used by build_world:
     roads = prepare_roads(...)             # 4 m centrelines, mode, width
     roads = merge_parallel(roads)          # one ribbon per carriageway pair
-    set_design_profiles(roads)             # smooth target heights
+    road_graph.solve_design_profiles(roads)  # one network height solve
     carved = carve_terrain(height, roads)  # one surface, no nearest-seed steps
     surface = quantized carved terrain     # what terrain.r16 stores
     set_bridge_decks(roads, surface)
@@ -32,13 +32,13 @@ MODE_ALPHA = {"ground": 1.0, "tunnel": 0.75, "bridge": 0.5}
 CLASS_RANK = {name: index for index, name in enumerate(ROAD_CLASSES)}
 PARALLEL_COS = math.cos(math.radians(30.0))
 MAX_SIDE_HALF_M = 16.0
-GROUND_MIN_Z = 0.25
 DESIGN_SIGMA_M = 12.0
-DESIGN_GRADE = 0.30
-DESIGN_MAX_DEVIATION_M = 3.0
 TRENCH_CLEARANCE_M = 4.0
 BRIDGE_LIFT_M = 0.16
 BRIDGE_FADE_M = 40.0
+OVERPASS_CLEARANCE_M = 5.5
+OVERPASS_NEAR_END_M = 10.0
+OVERPASS_RAMP_GRADE = 0.20
 
 
 def arc_length(xy: np.ndarray) -> np.ndarray:
@@ -84,31 +84,18 @@ def left_normals(xy: np.ndarray, cap: float = 2.2) -> np.ndarray:
     return out
 
 
-def limit_grade(z: np.ndarray, xy: np.ndarray, grade: float) -> np.ndarray:
-    if len(z) < 2:
-        return z
-    step = np.maximum(np.hypot(np.diff(xy[:, 0]), np.diff(xy[:, 1])), 0.5)
-    out = np.array(z, dtype=np.float64, copy=True)
-    for i in range(1, len(out)):
-        cap = grade * step[i - 1]
-        out[i] = min(max(out[i], out[i - 1] - cap), out[i - 1] + cap)
-    for i in range(len(out) - 2, -1, -1):
-        cap = grade * step[i]
-        out[i] = min(max(out[i], out[i + 1] - cap), out[i + 1] + cap)
-    return out
-
-
 def ground_lift(highway: str) -> float:
     """Higher classes sit a few centimetres higher so overlapping junction ribbons do not z-fight."""
     rank = CLASS_RANK.get(highway, len(ROAD_CLASSES))
     return 0.10 + 0.012 * max(0, len(ROAD_CLASSES) - rank)
 
 
-def make_road(xy, terrain_z, highway, lanes, mode, layer, horizontal) -> dict:
+def make_road(xy, terrain_z, highway, lanes, mode, layer, horizontal, keys=None) -> dict:
     width, lanes = road_game_width(highway, lanes, horizontal)
     half = np.full(len(xy), width * 0.5)
     return {
         "xy": np.asarray(xy, dtype=np.float64),
+        "keys": np.full(len(xy), -1, dtype=np.int64) if keys is None else np.asarray(keys, dtype=np.int64),
         "terrain": np.asarray(terrain_z, dtype=np.float64),
         "width": width,
         "base_half": width * 0.5,
@@ -125,7 +112,7 @@ def make_road(xy, terrain_z, highway, lanes, mode, layer, horizontal) -> dict:
 
 def slice_road(road: dict, start: int, end: int) -> dict:
     out = dict(road)
-    for key in ("xy", "terrain", "hl", "hr", "design"):
+    for key in ("xy", "terrain", "hl", "hr", "design", "keys"):
         if key in road:
             out[key] = road[key][start:end].copy()
     return out
@@ -228,9 +215,11 @@ def merge_parallel(roads: list[dict], log=print) -> list[dict]:
         for s, e in _runs(free):
             if s > 0 and e < n and e - s < 3:
                 continue
-            keep_mask[s:e] = True
             s2, e2 = max(0, s - 1), min(n, e + 1)
             if e2 - s2 >= 2 and arc_length(xy_b[s2:e2])[-1] >= 6.0:
+                # Only points of an emitted piece may absorb later ways; a run
+                # dropped for being short must not swallow a way into nothing.
+                keep_mask[s:e] = True
                 runs.append((s2, e2))
         kept_runs[b] = runs
         alive[sl] &= keep_mask
@@ -247,29 +236,6 @@ def merge_parallel(roads: list[dict], log=print) -> list[dict]:
     widened = sum(1 for r in out if np.any(r["hl"] > r["base_half"] + 0.01) or np.any(r["hr"] > r["base_half"] + 0.01))
     log(f"merge_parallel: {len(roads)} ways -> {len(out)} pieces  absorbed points {absorbed_points}/{len(pts)}  widened pieces {widened}")
     return out
-
-
-def set_design_profiles(roads: list[dict]) -> None:
-    """Target heights for ground roads and open-cut tunnels.
-
-    Ground: the terrain profile smoothed along the road, grade-limited, but
-    never more than DESIGN_MAX_DEVIATION_M from the smoothed terrain, so the
-    carve cannot build tall embankments or deep cuts on steep streets.
-    """
-    sigma = DESIGN_SIGMA_M / STEP_M
-    for road in roads:
-        t = road["terrain"]
-        xy = road["xy"]
-        if road["mode"] == "tunnel":
-            s = arc_length(xy)
-            total = float(s[-1]) or 1.0
-            z = t[0] + (t[-1] - t[0]) * (s / total)
-            road["design"] = np.maximum(z, 0.40)
-        elif road["mode"] == "ground":
-            smooth = gaussian_filter1d(np.maximum(t, GROUND_MIN_Z), sigma, mode="nearest") if len(t) > 2 else np.maximum(t, GROUND_MIN_Z)
-            z = limit_grade(smooth, xy, DESIGN_GRADE)
-            z = np.clip(z, smooth - DESIGN_MAX_DEVIATION_M, smooth + DESIGN_MAX_DEVIATION_M)
-            road["design"] = np.maximum(z, GROUND_MIN_Z)
 
 
 def bridge_over_trenches(roads: list[dict], log=print) -> list[dict]:
@@ -479,15 +445,17 @@ def carve_terrain(height: np.ndarray, roads: list[dict], landscape, log=print) -
     return carved.astype(np.float32)
 
 
-def _bridge_graph_distances(bridges: list[dict]) -> list[tuple[float, float]]:
+def _bridge_graph_distances(bridges: list[dict]):
     """Distance along connected bridge ways from each bridge end to the nearest
     end that comes down to the ground, so a viaduct split into several OSM ways
-    does not dip to the ground at every split."""
+    does not dip to the ground at every split.
+
+    Returns (per-bridge (d0, d1), node id of each start, node id of each end)."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import dijkstra
 
     if not bridges:
-        return []
+        return [], np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
     ends = np.array([[r["xy"][0], r["xy"][-1]] for r in bridges]).reshape(-1, 2)
     layer = np.repeat([r["layer"] for r in bridges], 2)
     tree = cKDTree(ends)
@@ -499,7 +467,7 @@ def _bridge_graph_distances(bridges: list[dict]) -> list[tuple[float, float]]:
             i = parent[i]
         return i
 
-    for i, j in tree.query_pairs(2.0):
+    for i, j in sorted(tree.query_pairs(2.0)):
         if layer[i] == layer[j]:
             parent[find(i)] = find(j)
     node = np.array([find(i) for i in range(len(ends))])
@@ -529,19 +497,83 @@ def _bridge_graph_distances(bridges: list[dict]) -> list[tuple[float, float]]:
         dist = np.full(n_nodes, np.inf)
     else:
         dist = dijkstra(graph, directed=False, indices=sources, min_only=True)
-    return [(float(dist[a[i]]), float(dist[b[i]])) for i in range(len(bridges))]
+    return [(float(dist[a[i]]), float(dist[b[i]])) for i in range(len(bridges))], a, b
 
 
-def set_bridge_decks(roads: list[dict], surface_at) -> None:
+def _lower_z(road: dict, j: int, u: float, surface_at) -> float:
+    """Driving surface height of a road piece at segment j, fraction u."""
+    p = road["xy"][j] * (1 - u) + road["xy"][j + 1] * u
+    if road["mode"] == "bridge":
+        return float(road["deck"][j] * (1 - u) + road["deck"][j + 1] * u)
+    return float(surface_at(np.array([p[0]]), np.array([p[1]]))[0]) + ground_lift(road["highway"])
+
+
+def _floor_decks(bridges: list[dict], a_nodes, b_nodes, sources: list[tuple[int, int, float]], grade: float) -> np.ndarray:
+    """Per bridge sample, max over sources of (value - grade * distance) along the
+    connected bridge graph (piece ends sharing a node are one vertex)."""
+    from tools.pipeline.road_graph import _sym, envelope
+
+    sizes = np.array([len(r["xy"]) for r in bridges])
+    off = np.concatenate([[0], np.cumsum(sizes)])
+    n_nodes = int(max(a_nodes.max(), b_nodes.max())) + 1
+    vid = np.empty(int(off[-1]), dtype=np.int64)
+    nxt = n_nodes
+    for i, r in enumerate(bridges):
+        k = sizes[i]
+        ids = np.arange(nxt, nxt + k)
+        nxt += k
+        ids[0] = a_nodes[i]
+        ids[-1] = b_nodes[i]
+        vid[off[i] : off[i + 1]] = ids
+    owner = np.repeat(np.arange(len(bridges)), sizes)
+    pts = np.concatenate([r["xy"] for r in bridges])
+    seg = np.flatnonzero(owner[:-1] == owner[1:])
+    eu, ev = vid[seg], vid[seg + 1]
+    el = np.maximum(np.hypot(*(pts[seg + 1] - pts[seg]).T), 0.05)
+    keep = eu != ev
+    graph = _sym(eu[keep], ev[keep], grade * el[keep], nxt)
+    best = {}
+    for bi, i, value in sources:
+        for v in (vid[off[bi] + i], vid[off[bi] + i + 1]):
+            best[int(v)] = max(best.get(int(v), -np.inf), value)
+    src = np.array(list(best.keys()), dtype=np.int64)
+    val = np.array([best[k] for k in src.tolist()])
+    floor = -envelope(graph, src, -val)
+    return floor[vid]
+
+
+def set_bridge_decks(roads: list[dict], surface_at, log=print) -> dict:
     """Deck height per centreline point: carved ground (sea clamped to 0) kept
-    over short dips, plus clearance that fades to zero toward ground ends."""
+    over short dips, plus clearance that fades to zero toward ground ends.
+
+    The fade length at a point is min(BRIDGE_FADE_M, way length / 3) of its
+    bridge way; where bridge ways meet, the largest of theirs. So a short
+    bridge still reaches full clearance in its middle.
+
+    Then a hard floor: where a deck crosses a lower road it does not connect
+    to (more than OVERPASS_NEAR_END_M from a ground end), it must clear that
+    road by OVERPASS_CLEARANCE_M. The floor spreads along the connected
+    bridge ways at OVERPASS_RAMP_GRADE, and decks are raised to it, lower
+    bridge layers first.
+    """
+    from tools.pipeline.road_graph import deck_crossings
+
     for road in roads:
         if "deck_fixed" in road:
             road["deck"] = road["deck_fixed"]
             road["deck_fade"] = np.zeros(len(road["xy"]))
+            road["end_dist"] = np.zeros(len(road["xy"]))
     bridges = [r for r in roads if r["mode"] == "bridge" and len(r["xy"]) > 1 and "deck_fixed" not in r]
-    dists = _bridge_graph_distances(bridges)
-    for road, (d0, d1) in zip(bridges, dists):
+    dists, a_nodes, b_nodes = _bridge_graph_distances(bridges)
+    if not bridges:
+        return {}
+    lengths = np.array([arc_length(r["xy"])[-1] for r in bridges])
+    own_fade = np.maximum(np.minimum(BRIDGE_FADE_M, lengths / 3.0), STEP_M)
+    n_nodes = int(max(a_nodes.max(), b_nodes.max())) + 1
+    node_fade = np.zeros(n_nodes)
+    np.maximum.at(node_fade, a_nodes, own_fade)
+    np.maximum.at(node_fade, b_nodes, own_fade)
+    for i, (road, (d0, d1)) in enumerate(zip(bridges, dists)):
         xy = road["xy"]
         s = arc_length(xy)
         total = float(s[-1])
@@ -551,10 +583,70 @@ def set_bridge_decks(roads: list[dict], surface_at) -> None:
             base = gaussian_filter1d(base, DESIGN_SIGMA_M / STEP_M, mode="nearest")
         clearance = max(6.0, 9.0 * road["height_scale"])
         end_dist = np.minimum(d0 + s, d1 + (total - s))
-        fade = np.clip(end_dist / BRIDGE_FADE_M, 0.0, 1.0)
+        fade_len = np.full(len(xy), own_fade[i])
+        fade_len[0] = node_fade[a_nodes[i]]
+        fade_len[-1] = node_fade[b_nodes[i]]
+        fade = np.clip(end_dist / fade_len, 0.0, 1.0)
         fade = fade * fade * (3.0 - 2.0 * fade)
         road["deck"] = base + BRIDGE_LIFT_M + clearance * fade
         road["deck_fade"] = fade
+        road["end_dist"] = end_dist
+    lifted = 0
+    worst = 0.0
+    ground = [r for r in roads if r["mode"] in {"ground", "tunnel"} and len(r["xy"]) > 1]
+    for layer in sorted({r["layer"] for r in bridges}):
+        upper = [i for i, r in enumerate(bridges) if r["layer"] == layer]
+        lowers = ground + [r for r in roads if r["mode"] == "bridge" and len(r["xy"]) > 1 and (r["layer"] < layer or ("deck_fixed" in r and layer > 0))]
+        bi, si, _, lz, dz = deck_crossings([bridges[i] for i in upper], lowers, "deck", lambda r, j, u: _lower_z(r, j, u, surface_at), OVERPASS_NEAR_END_M)
+        need = lz + OVERPASS_CLEARANCE_M
+        short = need > dz + 1e-6
+        if not short.any():
+            continue
+        sources = [(upper[int(b)], int(i), float(v)) for b, i, v in zip(bi[short], si[short], need[short])]
+        floor = _floor_decks(bridges, a_nodes, b_nodes, sources, OVERPASS_RAMP_GRADE)
+        sizes = np.cumsum([0] + [len(r["xy"]) for r in bridges])
+        for k in upper:
+            f = floor[sizes[k] : sizes[k + 1]]
+            raise_by = f - bridges[k]["deck"]
+            if np.any(raise_by > 1e-6):
+                worst = max(worst, float(raise_by.max()))
+                bridges[k]["deck"] = np.maximum(bridges[k]["deck"], f)
+                lifted += 1
+    log(f"bridge decks {len(bridges)}  raised over crossed roads {lifted}  max raise {worst:.2f} m")
+    return {"bridge_pieces": len(bridges), "raised_over_crossings": lifted, "max_raise_m": worst}
+
+
+def bridge_clearance_report(roads: list[dict]) -> dict:
+    """Final deck centreline height minus the driving surface of every lower road
+    it crosses without a shared node (crossings near a ramp foot excluded)."""
+    from tools.pipeline.road_graph import deck_crossings
+
+    bridges = [r for r in roads if r["mode"] == "bridge" and "center" in r and "deck_fixed" not in r and len(r["xy"]) > 1]
+    for r in bridges:
+        r["_cz"] = r["center"][:, 2]
+    gaps = []
+    for layer in sorted({r["layer"] for r in bridges}):
+        upper = [r for r in bridges if r["layer"] == layer]
+        lowers = [r for r in roads if "center" in r and len(r["xy"]) > 1 and (r["mode"] != "bridge" or r["layer"] < layer or ("deck_fixed" in r and layer > 0))]
+
+        def lz(r, j, u):
+            return float(r["center"][j, 2] * (1 - u) + r["center"][j + 1, 2] * u)
+
+        _, _, _, low, deck = deck_crossings(upper, lowers, "_cz", lz, OVERPASS_NEAR_END_M)
+        gaps.append(deck - low)
+    for r in bridges:
+        r.pop("_cz", None)
+    gap = np.concatenate(gaps) if gaps else np.zeros(0)
+    if not len(gap):
+        return {"crossings": 0}
+    return {
+        "crossings": int(len(gap)),
+        "min_m": float(gap.min()),
+        "p05_m": float(np.percentile(gap, 5)),
+        "median_m": float(np.median(gap)),
+        "under_4m_pct": float(np.mean(gap < 4.0) * 100.0),
+        "under_5_5m_pct": float(np.mean(gap < OVERPASS_CLEARANCE_M - 0.01) * 100.0),
+    }
 
 
 def ribbon_grid(road: dict):
