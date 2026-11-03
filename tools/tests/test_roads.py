@@ -50,13 +50,18 @@ def test_quantize_r16_matches_4cm_steps():
 
 def test_dual_carriageway_merges_into_one_wider_ribbon():
     a = _road(_line(0, 0, 200, 0), lanes=2)
-    b = _road(_line(200, 5, 0, 5), lanes=2)  # opposite direction, 5 m apart, 8 m wide each
+    b = _road(_line(200, 5, 0, 5), lanes=2)  # opposite direction, 5 m apart, 2 x 3 m lanes each
     out = rn.merge_parallel([a, b], log=lambda *_: None)
     assert len(out) == 1
     kept = out[0]
     # The kept ribbon now spans both carriageways on its left side.
-    assert kept["hl"][len(kept["hl"]) // 2] >= 5.0 + 4.0 - 1e-6
-    assert np.allclose(kept["hr"], 4.0)
+    half = a["base_half"]
+    assert kept["hl"][len(kept["hl"]) // 2] >= 5.0 + half - 1e-6
+    assert np.allclose(kept["hr"], half)
+    # The absorbed lanes count toward the left block of the lane layout.
+    width, split, lanes_l, lanes_r = rn.lane_layout(kept)
+    mid = len(width) // 2
+    assert lanes_l[mid] == 3 and lanes_r[mid] == 1
 
 
 def test_crossing_road_is_not_merged():
@@ -118,8 +123,9 @@ def test_ribbon_sits_on_surface_and_faces_up():
     lift = rn.ground_lift("primary")
     v = rib["verts"]
     assert np.allclose(v[:, 2] - surface(v[:, 0], v[:, 1]), lift)
-    # Quads are at most 4 m along and across.
-    assert len(np.unique(rib["uv"][:, 1])) >= 3
+    # Narrow ribbons are one quad across; uv.y is metres from the left edge.
+    assert np.allclose(np.unique(rib["uv"][:, 1]), [0.0, road["hl"][0] + road["hr"][0]])
+    assert rib["uv1"].shape == (len(v), 2) and rib["material"] == 1
     gl = np.column_stack([v[:, 0], v[:, 2], v[:, 1]])
     a, b, c = gl[rib["tris"][:, 0]], gl[rib["tris"][:, 1]], gl[rib["tris"][:, 2]]
     assert np.all(np.cross(b - a, c - a)[:, 1] > 0)

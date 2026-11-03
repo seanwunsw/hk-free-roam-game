@@ -22,16 +22,20 @@ from tools.pipeline.geometry import (  # noqa: E402
 from tools.pipeline.glbutil import read_hkgm_primitives, write_glb  # noqa: E402
 
 
-def test_lane_minimums():
-    width, lanes = road_game_width("secondary", 2, 0.5)
+def test_lane_floor_and_cap():
+    # Squashed area: the 3.0 m lane floor wins, so two lanes are 6 m, not the old 8 m.
+    width, lanes = road_game_width("secondary", 2, 0.3)
     assert lanes == 2
-    assert width >= 8.0
+    assert abs(width - 6.0) < 1e-9
     width, lanes = road_game_width("unclassified", 1, 0.1)
     assert lanes == 1
-    assert width >= 3.2
-    width, lanes = road_game_width("motorway", 3, 1.0)
+    assert abs(width - 3.0) < 1e-9
+    # Unsquashed: real lane width, never wider.
+    width, lanes = road_game_width("motorway", 3, 1.4)
     assert lanes == 3
-    assert width >= 9.6
+    assert abs(width - 3 * 3.65) < 1e-9
+    width, _ = road_game_width("primary", 2, 0.95)
+    assert 6.0 < width < 7.0
 
 
 def test_ear_clip_square_and_l():

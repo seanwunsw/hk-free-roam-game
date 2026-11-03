@@ -29,6 +29,7 @@ from tools.hkwarp.warp import build_warp, repo_root
 from tools.pipeline.dem import load_srtm, sample_srtm
 from tools.pipeline.geometry import (
     ROAD_CLASSES,
+    WALK_CLASSES,
     MeshAccum,
     append_extrusion,
     clean_ring,
@@ -38,6 +39,7 @@ from tools.pipeline.geometry import (
     signed_area,
 )
 from tools.pipeline.glbutil import write_glb
+from tools.pipeline import streetscape
 from tools.pipeline import coast as coastmask
 from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
@@ -45,6 +47,7 @@ from tools.pipeline import spawns as spawn_rules
 from tools.pipeline.surface import quantize_r16, sample_ue
 
 ROAD_CLASS_SET = set(ROAD_CLASSES)
+WALK_CLASS_SET = set(WALK_CLASSES)
 SEABED_DROP_M = 2.0
 # OSM coastline decides land and sea. Land never dips under this (low SRTM shore
 # cells would flood); sea slopes from -SEABED_DROP_M at the shore to SHELF_DEPTH_M.
@@ -84,20 +87,6 @@ HEIGHT_BY_KIND = {
     "kiosk": 3.5,
     "service": 8.0,
     "parking": 12.0,
-}
-COLOR_BY_KIND = {
-    "house": (0.76, 0.68, 0.55),
-    "residential": (0.72, 0.64, 0.56),
-    "apartments": (0.70, 0.66, 0.60),
-    "commercial": (0.62, 0.64, 0.68),
-    "retail": (0.76, 0.58, 0.50),
-    "office": (0.50, 0.60, 0.70),
-    "hotel": (0.66, 0.56, 0.62),
-    "industrial": (0.55, 0.54, 0.50),
-    "school": (0.80, 0.74, 0.58),
-    "hospital": (0.82, 0.82, 0.80),
-    "temple": (0.72, 0.62, 0.48),
-    "church": (0.70, 0.66, 0.60),
 }
 ROAD_DRAW = {
     "motorway": (40, 40, 46),
@@ -233,12 +222,49 @@ def _way_nodes(way) -> np.ndarray | None:
     return np.asarray(points, dtype=np.float64)
 
 
+SKIP_SERVICE = {"parking_aisle", "drive-through", "emergency_access"}
+SKIP_FOOTWAY = {"sidewalk", "crossing"}
+
+
+def oneway_direction(tags) -> int:
+    """+1 one-way along the way, -1 one-way against it, 0 two-way.
+
+    oneway=yes/true/1 and -1/reverse; roundabouts and motorways are one-way
+    unless tagged oneway=no."""
+    value = str(tags.get("oneway") or "").strip().lower()
+    if value in {"yes", "true", "1"}:
+        return 1
+    if value in {"-1", "reverse"}:
+        return -1
+    if value in {"no", "false", "0", "alternating", "reversible"}:
+        return 0
+    if tags.get("junction") in {"roundabout", "circular"}:
+        return 1
+    if tags.get("highway") in {"motorway", "motorway_link"}:
+        return 1
+    return 0
+
+
+def _walk_record(tags, highway: str) -> dict | None:
+    """Ground-level walkways only: footbridges, subways and indoor paths would drape
+    on the terrain in the wrong place, and sidewalks/crossings are drawn by the
+    pavement bands and the road surface."""
+    if highway == "footway" and tags.get("footway") in SKIP_FOOTWAY:
+        return None
+    if _truthy(tags.get("bridge")) or _truthy(tags.get("tunnel")) or _truthy(tags.get("indoor")):
+        return None
+    if tags.get("covered") in {"yes"} or tags.get("level") not in (None, "0") or _layer_value(tags) != 0:
+        return None
+    return {"highway": highway}
+
+
 def extract_osm(path: Path, log: Log) -> dict:
     import osmium
 
     buildings_ll = []
     building_meta = []
     roads = []
+    walks = []
     waters_ll = []
     coasts = []
     seen = 0
@@ -281,10 +307,23 @@ def extract_osm(path: Path, log: Log) -> dict:
             elif obj.is_way():
                 tags = obj.tags
                 highway = tags.get("highway")
+                if highway in WALK_CLASS_SET:
+                    walk = _walk_record(tags, highway)
+                    if walk is not None:
+                        line = _way_nodes(obj)
+                        if line is not None:
+                            walk["ll"] = line
+                            walks.append(walk)
+                    continue
                 if highway in ROAD_CLASS_SET:
+                    if highway == "service" and tags.get("service") in SKIP_SERVICE:
+                        continue
                     line = _way_nodes(obj)
                     if line is None:
                         continue
+                    direction = oneway_direction(tags)
+                    if direction < 0:
+                        line = line[::-1].copy()
                     lanes = None
                     if tags.get("lanes"):
                         try:
@@ -302,6 +341,7 @@ def extract_osm(path: Path, log: Log) -> dict:
                             "tunnel": tunnel and not bridge,
                             "bridge": bridge and not tunnel,
                             "layer": layer,
+                            "oneway": direction != 0,
                         }
                     )
                 elif tags.get("natural") == "coastline":
@@ -315,12 +355,14 @@ def extract_osm(path: Path, log: Log) -> dict:
             continue
     log(
         f"osm done records {seen}  buildings {len(buildings_ll)}  roads {len(roads)}  "
-        f"water {len(waters_ll)}  coast {len(coasts)}"
+        f"water {len(waters_ll)}  coast {len(coasts)}  walkways {len(walks)}  "
+        f"one-way roads {sum(1 for r in roads if r['oneway'])}"
     )
     return {
         "buildings_ll": buildings_ll,
         "building_meta": building_meta,
         "roads": roads,
+        "walks": walks,
         "waters_ll": waters_ll,
         "coasts": coasts,
     }
@@ -353,10 +395,44 @@ def _simplify_ring(ring: np.ndarray, tolerance: float, limit: int) -> np.ndarray
     return ring
 
 
+# Hong Kong facades: white and cream tile, pastel paint, grey concrete, brick, glass.
+FACADE_PALETTE = {
+    "white": (0.88, 0.87, 0.84),
+    "cream": (0.86, 0.79, 0.63),
+    "grey": (0.68, 0.69, 0.71),
+    "pink": (0.84, 0.62, 0.58),
+    "blue": (0.58, 0.69, 0.82),
+    "mint": (0.62, 0.79, 0.70),
+    "ochre": (0.88, 0.73, 0.44),
+    "brick": (0.64, 0.40, 0.31),
+    "glass": (0.32, 0.42, 0.52),
+    "concrete": (0.56, 0.55, 0.51),
+}
+PALETTE_BY_KIND = {
+    "office": ("glass", "glass", "grey", "blue", "white"),
+    "commercial": ("glass", "grey", "white", "blue", "cream"),
+    "retail": ("white", "cream", "pink", "grey", "ochre"),
+    "hotel": ("glass", "white", "cream", "grey"),
+    "industrial": ("concrete", "grey", "concrete", "blue", "white"),
+    "warehouse": ("concrete", "grey", "blue"),
+    "house": ("white", "cream", "pink", "ochre", "brick", "mint"),
+    "detached": ("white", "cream", "pink", "ochre", "brick"),
+    "school": ("cream", "ochre", "white", "pink"),
+    "hospital": ("white", "white", "cream"),
+    "temple": ("brick", "ochre", "cream"),
+    "church": ("white", "cream", "brick"),
+}
+DEFAULT_PALETTE = ("white", "cream", "grey", "pink", "blue", "mint", "ochre", "white", "cream", "concrete", "glass", "brick")
+
+
 def _color_for(kind: str, jitter: float) -> tuple[float, float, float]:
-    base = COLOR_BY_KIND.get(kind, (0.68, 0.64, 0.58))
-    scale = 0.88 + 0.24 * jitter
-    return tuple(float(np.clip(channel * scale, 0.15, 0.95)) for channel in base)
+    """Facade tint: a palette entry picked by the footprint hash, brightness +-12%.
+    M_Facade shades walls from it and gives the roof its own light grey."""
+    names = PALETTE_BY_KIND.get(kind, DEFAULT_PALETTE)
+    pick = int(jitter * 65535.0 * 7919.0) % len(names)
+    base = FACADE_PALETTE[names[pick]]
+    scale = 0.88 + 0.24 * ((jitter * 37.0) % 1.0)
+    return tuple(float(np.clip(channel * scale, 0.10, 0.97)) for channel in base)
 
 
 def _jitter(cx: float, cy: float) -> float:
@@ -384,7 +460,7 @@ def prepare_buildings(warp, extracted, bounds, log: Log) -> list[dict]:
         if max_xy[0] < bounds[0] or min_xy[0] > bounds[2] or max_xy[1] < bounds[1] or min_xy[1] > bounds[3]:
             continue
         area = abs(signed_area(ring))
-        if area < 4.0:
+        if area < 1.0:
             continue
         pending.append((ring, meta, area, float(ring[:, 0].mean()), float(ring[:, 1].mean())))
     log(f"building centroids to scale {len(pending)}")
@@ -405,7 +481,7 @@ def prepare_buildings(warp, extracted, bounds, log: Log) -> list[dict]:
             dropped_area += 1
             continue
         ring = _simplify_ring(ring, 1.1, 12)
-        if len(ring) < 3 or abs(signed_area(ring)) < 4.0:
+        if len(ring) < 3 or abs(signed_area(ring)) < 1.0:
             dropped_area += 1
             continue
         if tagged_height is None:
@@ -629,6 +705,19 @@ def bilinear(grid: np.ndarray, xs, ys, landscape) -> np.ndarray:
     return (g00 * (1.0 - tx) + g10 * tx) * (1.0 - ty) + (g01 * (1.0 - tx) + g11 * tx) * ty
 
 
+def perpendicular_scale(xy: np.ndarray, sx: float, sy: float) -> float:
+    """Warp scale across a polyline: the real width w of a strip with game normal n
+    becomes w * |S n| with S = diag(sx, sy). Length-weighted RMS over segments."""
+    seg = np.diff(np.asarray(xy, dtype=np.float64), axis=0)
+    length = np.hypot(seg[:, 0], seg[:, 1])
+    if len(seg) == 0 or float(length.sum()) < 1e-6:
+        return float(math.sqrt(max(sx * sy, 1e-6)))
+    nx = -seg[:, 1] / np.maximum(length, 1e-9)
+    ny = seg[:, 0] / np.maximum(length, 1e-9)
+    s2 = (sx * nx) ** 2 + (sy * ny) ** 2
+    return float(math.sqrt(float(np.sum(s2 * length) / length.sum())))
+
+
 def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
     log(f"preparing {len(extracted['roads'])} roads")
     prepared = []
@@ -650,6 +739,7 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
             continue
         rx, ry = warp.game_to_real_m(float(xy[len(xy) // 2, 0]), float(xy[len(xy) // 2, 1]))
         horizontal = float(warp.horizontal_scale(rx, ry))
+        perp = perpendicular_scale(xy, *(float(v) for v in warp.axis_scales(rx, ry)))
         terrain_z = np.asarray(bilinear(height, xy[:, 0], xy[:, 1], landscape), dtype=np.float64)
         real_step = np.hypot(np.diff(ll[:, 0]) * warp.m_per_deg_lon, np.diff(ll[:, 1]) * warp.m_per_deg_lat)
         real_length = float(real_step.sum())
@@ -664,7 +754,12 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
             wet = terrain_z < LAND_MIN_M
             wet_samples += int(wet.sum())
             terrain_z = np.where(wet, LAND_MIN_M, terrain_z)
-        prepared.append(roadnet.make_road(xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal, keys))
+        prepared.append(
+            roadnet.make_road(
+                xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal, keys,
+                perp=perp, oneway=bool(road.get("oneway")),
+            )
+        )
     tunnels = sum(1 for road in prepared if road["mode"] == "tunnel")
     bridges = sum(1 for road in prepared if road["mode"] == "bridge")
     log(f"roads kept {len(prepared)}  bridges {bridges}  open-cut tunnels {tunnels}  ground samples lifted to shore {wet_samples}")
@@ -726,7 +821,7 @@ def cut_buildings(buildings: list[dict], buffers, tree, log: Log) -> list[dict]:
         cutter = buffers[chosen[0]] if len(chosen) == 1 else shapely.union_all([buffers[item] for item in chosen])
         diff = shapely.difference(geoms[index], cutter)
         ring = largest_ring(diff)
-        if ring is None or abs(signed_area(ring)) < 6.0:
+        if ring is None or abs(signed_area(ring)) < 3.0:
             removed += 1
             continue
         ring = _simplify_ring(ring, 0.8, 14)
@@ -762,7 +857,7 @@ def repair_rings(buildings: list[dict], log: Log) -> list[dict]:
             ring = largest_ring(shapely.simplify(shapely.polygons(ring), 0.3, preserve_topology=True))
         if ring is not None:
             ring = ensure_ccw(clean_ring(ring, 0.15))
-        if ring is None or len(ring) < 3 or abs(signed_area(ring)) < 6.0 or not shapely.polygons(ring).is_valid:
+        if ring is None or len(ring) < 3 or abs(signed_area(ring)) < 3.0 or not shapely.polygons(ring).is_valid:
             dropped += 1
             continue
         building = dict(building)
@@ -839,35 +934,46 @@ def _tile_index(x: float, y: float, landscape, tile: float) -> tuple[int, int]:
     return max(0, min(max_ix, ix)), max(0, min(max_iy, iy))
 
 
-def _road_tile_prims(ribbons: list[dict], landscape, tile: float) -> dict:
-    """Split the world-space ribbons into one road primitive per tile by triangle centroid."""
-    if not ribbons:
+def _road_tile_prims(meshes: list[dict], landscape, tile: float) -> dict:
+    """Split world-space road meshes into primitives per tile (by triangle
+    centroid) and per material: 1 drivable ribbon, 3 junction fill, 4 pavement
+    and walkway. Colours and UV1 carry the M_Road marking data."""
+    meshes = [m for m in meshes if m is not None and len(m["tris"])]
+    if not meshes:
         return {}
-    verts, uvs, alphas, tris = [], [], [], []
+    verts, uvs, uv1s, colors, mats, tris = [], [], [], [], [], []
     base = 0
-    for rib in ribbons:
-        verts.append(rib["verts"])
-        uvs.append(rib["uv"])
-        alphas.append(np.full(len(rib["verts"]), rib["alpha"]))
-        tris.append(rib["tris"] + base)
-        base += len(rib["verts"])
+    for mesh in meshes:
+        n = len(mesh["verts"])
+        verts.append(mesh["verts"])
+        uvs.append(mesh["uv"])
+        uv1s.append(mesh.get("uv1", np.zeros((n, 2))))
+        col = np.asarray(mesh.get("color", np.tile((1.0, 0.0, 0.0, 1.0), (n, 1))), dtype=np.float64).copy()
+        col[:, 3] = mesh["alpha"] if np.ndim(mesh["alpha"]) == 0 else mesh["alpha"]
+        colors.append(col)
+        mats.append(np.full(len(mesh["tris"]), int(mesh.get("material", 1))))
+        tris.append(mesh["tris"] + base)
+        base += n
     verts = np.concatenate(verts)
     uvs = np.concatenate(uvs)
-    alphas = np.concatenate(alphas)
+    uv1s = np.concatenate(uv1s)
+    colors = np.concatenate(colors)
+    mats = np.concatenate(mats)
     tris = np.concatenate(tris)
     centroid = verts[tris].mean(axis=1)
     max_ix = max(0, int(math.floor((landscape["max_x"] - landscape["min_x"] - 1e-3) / tile)))
     max_iy = max(0, int(math.floor((landscape["max_y"] - landscape["min_y"] - 1e-3) / tile)))
     tix = np.clip(np.floor((centroid[:, 0] - landscape["min_x"]) / tile).astype(np.int64), 0, max_ix)
     tiy = np.clip(np.floor((centroid[:, 1] - landscape["min_y"]) / tile).astype(np.int64), 0, max_iy)
-    key = tix * 100000 + tiy
+    key = (tix * 100000 + tiy) * 8 + mats
     order = np.argsort(key, kind="stable")
     key_sorted = key[order]
     starts = np.flatnonzero(np.r_[True, key_sorted[1:] != key_sorted[:-1]])
     ends = np.r_[starts[1:], len(order)]
-    out = {}
+    out: dict = {}
     for start, end in zip(starts, ends):
-        ix, iy = int(key_sorted[start] // 100000), int(key_sorted[start] % 100000)
+        cell, material = divmod(int(key_sorted[start]), 8)
+        ix, iy = cell // 100000, cell % 100000
         ox = landscape["min_x"] + ix * tile
         oy = landscape["min_y"] + iy * tile
         tile_tris = tris[order[start:end]]
@@ -875,17 +981,17 @@ def _road_tile_prims(ribbons: list[dict], landscape, tile: float) -> dict:
         local = local.reshape(-1, 3)
         v = verts[used]
         gl = np.column_stack([v[:, 0] - ox, v[:, 2], v[:, 1] - oy])
-        color = np.empty((len(used), 4), dtype=np.float32)
-        color[:, :3] = (0.85, 0.85, 0.82)
-        color[:, 3] = alphas[used]
-        out[(ix, iy)] = {
-            "positions": gl.astype(np.float32),
-            "normals": roadnet.vertex_normals_gltf(gl, local).astype(np.float32),
-            "uvs": uvs[used].astype(np.float32),
-            "colors": color,
-            "indices": local.reshape(-1).astype(np.uint32),
-            "material": 1,
-        }
+        out.setdefault((ix, iy), []).append(
+            {
+                "positions": gl.astype(np.float32),
+                "normals": roadnet.vertex_normals_gltf(gl, local).astype(np.float32),
+                "uvs": uvs[used].astype(np.float32),
+                "uvs1": uv1s[used].astype(np.float32),
+                "colors": colors[used].astype(np.float32),
+                "indices": local.reshape(-1).astype(np.uint32),
+                "material": material,
+            }
+        )
     return out
 
 
@@ -899,6 +1005,8 @@ def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, ti
     records = []
     tris = 0
     written = 0
+    road_tris_by_material: dict[int, int] = {}
+    building_tris = 0
     for index, (ix, iy) in enumerate(sorted(keys)):
       try:
         origin = (landscape["min_x"] + ix * tile, landscape["min_y"] + iy * tile)
@@ -924,12 +1032,15 @@ def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, ti
                 write_glb(path, prims)
                 record["buildings"] = f"tiles/{path.name}"
                 tris += sum(len(prim["indices"]) // 3 for prim in prims)
-        prim = road_tiles.get((ix, iy))
-        if prim is not None:
+                building_tris += sum(len(prim["indices"]) // 3 for prim in prims)
+        road_prims = road_tiles.get((ix, iy))
+        if road_prims:
             path = tile_dir / f"r_{ix}_{iy}.glb"
-            write_glb(path, [prim])
+            write_glb(path, road_prims)
             record["roads"] = f"tiles/{path.name}"
-            tris += len(prim["indices"]) // 3
+            for prim in road_prims:
+                tris += len(prim["indices"]) // 3
+                road_tris_by_material[prim["material"]] = road_tris_by_material.get(prim["material"], 0) + len(prim["indices"]) // 3
         accum = MeshAccum()
         for water in water_index.get((ix, iy), []):
             append_extrusion(
@@ -954,8 +1065,8 @@ def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, ti
             log(f"wrote tiles {index}/{len(keys)}")
       except Exception:
             log(f"tile {ix},{iy} failed\n" + traceback.format_exc())
-    log(f"tile files referenced {written}  triangles {tris}")
-    return {"tiles": records, "triangles": tris}
+    log(f"tile files referenced {written}  triangles {tris}  buildings {building_tris}  road by material {road_tris_by_material}")
+    return {"tiles": records, "triangles": tris, "building_triangles": building_tris, "road_triangles_by_material": {str(k): v for k, v in sorted(road_tris_by_material.items())}}
 
 
 def _find_pad(x: float, y: float, height: np.ndarray, landscape) -> tuple[float, float, float]:
@@ -1330,6 +1441,9 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         return sample_ue(stored, landscape["min_x"], landscape["min_y"], landscape["spacing_x"], landscape["spacing_y"], xs, ys)
 
     road_stats["bridge_decks"] = roadnet.set_bridge_decks(roads, surface_at, log)
+    junctions = streetscape.junction_nodes(roads)
+    road_stats["junctions"] = streetscape.apply_marking_fade(roads, junctions)
+    log(f"junctions {json.dumps(road_stats['junctions'])}")
     ribbons = []
     for road in roads:
         rib = roadnet.build_ribbon(road, surface_at)
@@ -1348,12 +1462,41 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     road_stats["bridge_clearance"] = roadnet.bridge_clearance_report(roads)
     log(f"road stats {json.dumps(road_stats)}")
     log(f"road ribbons {len(ribbons)}  triangles {sum(len(r['tris']) for r in ribbons)}")
+    fills = streetscape.junction_fill_rings(roads, junctions)
+    fill_mesh = streetscape.junction_fill_mesh(fills, surface_at)
+    fill_rings = [fill["ring"] for fill in fills]
+    discs = [(j["xy"], j["radius"] + streetscape.PAVEMENT_M) for j in junctions if j["ground"]]
+    pave_mesh, pave_stats = streetscape.pavement_bands(
+        roads, streetscape.Blockers(streetscape.ribbon_outlines(roads) + fill_rings, discs), surface_at
+    )
+    visuals = {
+        "widths": streetscape.overlap_report(roads, junctions),
+        "junction_fill": streetscape.junction_gap_report(roads, fills),
+        "markings": streetscape.marking_report(roads),
+        "pavement": pave_stats,
+        "classes": {h: sum(1 for r in roads if r["highway"] == h) for h in ("residential", "living_street", "service", "unclassified")},
+        "oneway_pieces": sum(1 for r in roads if r.get("oneway")),
+    }
+    log(f"visuals {json.dumps(visuals)}")
     buffers, tree = _road_buffers(roads, log)
+    if fill_rings:
+        import shapely
+
+        buffers = buffers + [shapely.buffer(shapely.make_valid(shapely.polygons(ring)), 1.5) for ring in fill_rings]
+        tree = shapely.STRtree(buffers)
     buildings = cut_buildings(buildings, buffers, tree, log)
     buildings = repair_rings(buildings, log)
     buildings = assign_building_z(buildings, surface_at, log)
     waters = prepare_water(warp, extracted, height, landscape, log)
     del buffers, tree
+    walk_block = streetscape.Blockers(
+        streetscape.ribbon_outlines(roads, pad=streetscape.PAVEMENT_M + 0.3) + fill_rings + [b["ring"] for b in buildings], discs
+    )
+    walk_mesh, walk_stats = streetscape.walkway_mesh(warp, extracted.get("walks", []), walk_block, surface_at, bounds=bounds)
+    del walk_block
+    visuals["walkways"] = walk_stats
+    log(f"walkways {json.dumps(walk_stats)}")
+    road_meshes = ribbons + [m for m in (fill_mesh, pave_mesh, walk_mesh) if m is not None]
     tile = float(config["tile_size_m"])
     grouped = defaultdict(list)
     for building in buildings:
@@ -1362,8 +1505,14 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     if tile_dir.exists():
         shutil.rmtree(tile_dir)
     tile_dir.mkdir(parents=True, exist_ok=True)
-    mesh_info = _write_tile_meshes(tile_dir, grouped, ribbons, waters, landscape, tile, log)
-    index = spawn_rules.SurfaceIndex(ribbons, buildings, surface_at)
+    mesh_info = _write_tile_meshes(tile_dir, grouped, road_meshes, waters, landscape, tile, log)
+    visuals["triangles"] = {
+        "total": mesh_info["triangles"],
+        "buildings": mesh_info["building_triangles"],
+        "road_by_material": mesh_info["road_triangles_by_material"],
+    }
+    road_stats["visuals"] = visuals
+    index = spawn_rules.SurfaceIndex(road_meshes, buildings, surface_at)
     spawns, landmarks, notes = spawn_rules.build_spawns(
         config, warp, roads, index, lambda x, y: _find_pad(x, y, stored, landscape), log
     )
@@ -1431,9 +1580,9 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "The warp is separable: scale_x depends only on easting and scale_y only on northing, plus a smooth harbour widening. Islands that share a meridian with the core cannot be 1:10 on both axes without folding the core or pinching it.",
         "Tunnels, including cross-harbour tubes, are open cuts. The deck is the chord between the portals, clamped so it stays above the water plane. There is no bored tunnel and no tunnel roof.",
         "Building courtyards (OSM inner rings) are filled. building:part footprints may still overlap the parent footprint when the part is taller.",
-        "Residential, service, footway, path and steps are omitted. Cheung Chau and Lamma only keep unclassified streets, so driving there is local. There is no ferry; walk or fly between islands.",
+        "Residential, living_street and service roads are drivable (service minus parking aisles, drive-throughs and emergency access). footway, pedestrian and steps are thin walk strips on the terrain, not in the road graph; path, sidewalk and crossing are skipped. There is no ferry; walk or fly between islands.",
         "Terrain heights are SRTM 1 arc-second, not the Lands Department DTM. Land and sea come from OSM natural=coastline inside the Geofabrik extract polygon (SRTM > 1.5 m outside it, i.e. Shenzhen); sea is a synthetic shelf from -2 m at the shore to about -10 m, not surveyed bathymetry. Low land is clamped to +0.6 m.",
-        "Minimum road widths (3.2 m / 8 m) are cut out of building footprints, so dense blocks lose a strip along the carriageway.",
+        "Lane widths scale with the warp across the road, floored at 3.0 m per lane; the ribbons and junction fills plus a margin are cut out of building footprints.",
         "HLOD meshes are not built by this script. The Unreal baker assigns an HLOD layer; generating proxies is a separate editor command.",
         "This environment did not launch Unreal Editor, so the bake, character, cars, helicopter and frame rate were not played.",
     ]

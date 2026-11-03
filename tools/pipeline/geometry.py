@@ -16,7 +16,13 @@ ROAD_CLASSES = (
     "tertiary",
     "tertiary_link",
     "unclassified",
+    "residential",
+    "living_street",
+    "service",
 )
+
+# Walkable only: narrower ribbons on the terrain, pavement material, no cars.
+WALK_CLASSES = ("pedestrian", "footway", "steps")
 
 _DEFAULT_LANES = {
     "motorway": 3,
@@ -30,22 +36,54 @@ _DEFAULT_LANES = {
     "tertiary": 2,
     "tertiary_link": 1,
     "unclassified": 1,
+    "residential": 2,
+    "living_street": 1,
+    "service": 1,
 }
 
+# Real lane width in metres (Hong Kong TPDM: expressways 3.65 m, urban 3.3-3.5 m).
+REAL_LANE_M = {
+    "motorway": 3.65,
+    "motorway_link": 3.65,
+    "trunk": 3.65,
+    "trunk_link": 3.5,
+    "primary": 3.5,
+    "primary_link": 3.5,
+    "secondary": 3.5,
+    "secondary_link": 3.3,
+    "tertiary": 3.3,
+    "tertiary_link": 3.3,
+    "unclassified": 3.3,
+    "residential": 3.3,
+    "living_street": 3.0,
+    "service": 3.0,
+}
 
-def road_game_width(highway: str, lanes: int | None, horizontal_scale: float) -> tuple[float, int]:
-    """Playable width in game metres. One lane is at least 3.2 m; two lanes at least 8 m."""
+# Game lane floor: car body 1.9 m, wheel track 1.6 m, plus 0.55 m each side.
+MIN_LANE_M = 3.0
+
+REAL_WALK_M = {"pedestrian": 5.0, "footway": 2.5, "steps": 2.0}
+MIN_WALK_M = 1.5
+
+
+def road_game_width(highway: str, lanes: int | None, perp_scale: float) -> tuple[float, int]:
+    """Playable width in game metres and lane count.
+
+    perp_scale is the warp scale across the road (|S n| for the road normal n).
+    Each lane is the real lane width times that scale, but never narrower than
+    MIN_LANE_M (a car must fit) and never wider than the real lane.
+    """
     if lanes is None or lanes < 1:
         lanes = _DEFAULT_LANES.get(highway, 2)
-    lanes = int(lanes)
-    scaled = lanes * 3.4 * max(horizontal_scale, 0.05)
-    if lanes <= 1:
-        minimum = 3.2
-    elif lanes == 2:
-        minimum = 8.0
-    else:
-        minimum = max(8.0, lanes * 3.2)
-    return max(scaled, minimum), lanes
+    lanes = int(min(lanes, 8))
+    real = REAL_LANE_M.get(highway, 3.3)
+    lane = float(np.clip(real * max(perp_scale, 0.05), MIN_LANE_M, real))
+    return lanes * lane, lanes
+
+
+def walk_game_width(highway: str, perp_scale: float) -> float:
+    real = REAL_WALK_M.get(highway, 2.0)
+    return float(np.clip(real * max(perp_scale, 0.05), MIN_WALK_M, real))
 
 
 def signed_area(poly: np.ndarray) -> float:
