@@ -40,6 +40,7 @@ private:
 	void TryMapClick();
 	void TryHotkeys();
 	void ExitVehicle();
+	static FRotator UprightRotation(const AActor* Actor, float Pitch);
 	AActor* FindRide() const;
 
 	void OnMove(const struct FInputActionValue& Value);

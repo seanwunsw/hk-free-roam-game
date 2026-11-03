@@ -211,6 +211,13 @@ void AHKPlayerController::OnPossess(APawn* InPawn)
 	AActor* PreviousView = PlayerCameraManager ? PlayerCameraManager->GetViewTarget() : nullptr;
 	const bool bBlend = GetPawn() && GetPawn() != InPawn && PreviousView && PreviousView != InPawn;
 	Super::OnPossess(InPawn);
+	// AController::OnPossess copies the pawn's full rotation into the control rotation. A pitched,
+	// rolled or flipped car (or the walker that rode in it) then tilts every spring arm that uses
+	// the control rotation. Keep only the heading, no roll, and a level-ish pitch.
+	if (InPawn)
+	{
+		SetControlRotation(UprightRotation(InPawn, -12.f));
+	}
 	if (bBlend && PlayerCameraManager)
 	{
 		PlayerCameraManager->SetViewTarget(PreviousView);
@@ -485,6 +492,14 @@ AActor* AHKPlayerController::FindRide() const
 	return Best;
 }
 
+FRotator AHKPlayerController::UprightRotation(const AActor* Actor, float Pitch)
+{
+	// Heading from the forward vector so a car on its roof still gives its real yaw.
+	const FVector Forward = Actor->GetActorForwardVector();
+	const float Yaw = FMath::Abs(Forward.Z) < 0.99f ? FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X)) : Actor->GetActorRotation().Yaw;
+	return FRotator(Pitch, Yaw, 0.f);
+}
+
 void AHKPlayerController::ExitVehicle()
 {
 	APawn* Vehicle = GetPawn();
@@ -509,7 +524,10 @@ void AHKPlayerController::ExitVehicle()
 		Exit.Z = Vehicle->GetActorLocation().Z + Lift;
 	}
 	Walker->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	Walker->SetActorLocation(Exit, false, nullptr, ETeleportType::TeleportPhysics);
+	// While riding the walker was snapped to the vehicle, so it carries the vehicle's pitch and
+	// roll. CharacterMovement never removes them (RotationRate has no pitch or roll), so stand it
+	// up facing the vehicle's heading.
+	Walker->SetActorLocationAndRotation(Exit, UprightRotation(Vehicle, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
 	Walker->SetActorHiddenInGame(false);
 	Walker->SetActorEnableCollision(true);
 	Walker->GetCharacterMovement()->Activate();
