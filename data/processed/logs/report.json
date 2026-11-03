@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "seconds": 182.1,
+  "seconds": 459.7,
   "extent": {
     "min_x_m": -12193.275570889611,
     "max_x_m": 11226.224534466013,
@@ -34,71 +34,132 @@
     "vertices": 6876622,
     "osm_sea_vertices": 3984386,
     "osm_land_vertices": 2892236,
-    "sea_below_0_pct": 99.804,
-    "sea_below_seabed_pct": 99.743,
+    "sea_below_0_pct": 99.578,
+    "sea_below_seabed_pct": 99.426,
     "land_above_0_pct": 100.0,
-    "agree_pct": 99.886,
+    "agree_pct": 99.755,
     "spawns_over_sea": []
   },
   "road_heights": {
     "graph": {
-      "vertices": 260210,
-      "junction_vertices": 20949,
-      "contact_edges": 8695,
-      "max_grade_violation_m": 30.135243218437363,
-      "edges_over_grade_pct": 1.7937609300814727,
-      "clamped_pct": 7.618462011452289
+      "vertices": 607917,
+      "junction_vertices": 55564,
+      "contact_edges": 14139,
+      "max_grade_violation_m": 128.2418334908516,
+      "edges_over_grade_pct": 1.3116272142410792,
+      "clamped_pct": 4.84852372939069
     },
     "design_junction_spread": {
-      "junctions": 12556,
+      "junctions": 37434,
       "max_m": 0.0,
       "p99_m": 0.0,
       "over_5cm_pct": 0.0,
       "over_50cm_pct": 0.0
     },
     "design_grade": {
-      "length_km": 931.229170289786,
-      "over_limit_pct": 1.8208037541122921,
-      "max_grade": 1.8184979894214592
+      "length_km": 2203.681654648057,
+      "over_limit_pct": 1.2957831961720077,
+      "max_grade": 3.142916957433775
     },
     "bridge_decks": {
-      "bridge_pieces": 2546,
-      "raised_over_crossings": 160,
-      "max_raise_m": 22.77828960006134
+      "bridge_pieces": 3852,
+      "raised_over_crossings": 254,
+      "max_raise_m": 29.77281471352409
+    },
+    "junctions": {
+      "junctions": 23533,
+      "centreline_points_unmarked": 101386,
+      "centreline_points": 701120
     },
     "ribbon_junction_spread": {
-      "junctions": 14706,
-      "max_m": 28.59920664334306,
-      "p99_m": 6.842944242457461,
-      "over_5cm_pct": 26.83938528491772,
-      "over_50cm_pct": 8.275533795729634
+      "junctions": 40942,
+      "max_m": 62.06092039647241,
+      "p99_m": 5.7605209156502735,
+      "over_5cm_pct": 28.594108739192027,
+      "over_50cm_pct": 5.043720384934786
     },
     "ribbon_junction_spread_ground": {
-      "junctions": 12272,
-      "max_m": 2.374494177501031,
-      "p99_m": 0.44734403588551064,
-      "over_5cm_pct": 17.902542372881356,
-      "over_50cm_pct": 0.7659713168187744
+      "junctions": 36825,
+      "max_m": 2.5280377991921057,
+      "p99_m": 0.36618213375865966,
+      "over_5cm_pct": 23.32926001357773,
+      "over_50cm_pct": 0.49151391717583165
     },
     "ribbon_grade_ground": {
-      "length_km": 925.5535371185221,
-      "over_limit_pct": 3.072492990348036,
-      "max_grade": 1.4678097906702932
+      "length_km": 2192.451193832798,
+      "over_limit_pct": 3.0548305013872974,
+      "max_grade": 2.1030141483784632
     },
     "bridge_clearance": {
-      "crossings": 1158,
-      "min_m": 5.262868352477552,
+      "crossings": 2065,
+      "min_m": 5.030540757845021,
       "p05_m": 5.499999999000002,
-      "median_m": 7.086662288350413,
+      "median_m": 7.045380798048226,
       "under_4m_pct": 0.0,
-      "under_5_5m_pct": 0.6044905008635579
+      "under_5_5m_pct": 0.7263922518159807
+    },
+    "visuals": {
+      "widths": {
+        "ground_ribbon_area_m2": 11438458.6,
+        "unconnected_overlap_m2": 215414.0,
+        "unconnected_overlap_pct": 1.883,
+        "grey_slab_pct": 1.946,
+        "width_p50_m": 3.0,
+        "width_p95_m": 12.0,
+        "width_max_m": 30.81
+      },
+      "junction_fill": {
+        "fills": 22766,
+        "fill_area_m2": 1475350.1,
+        "gap_closed_m2": 136317.3
+      },
+      "markings": {
+        "oneway_points": 185483,
+        "oneway_points_with_centre_line": 0,
+        "points_with_centre_line": 229458
+      },
+      "pavement": {
+        "segments": 423672,
+        "kept": 274930,
+        "length_m": 1099720.0
+      },
+      "classes": {
+        "residential": 5923,
+        "living_street": 48,
+        "service": 23979,
+        "unclassified": 4513
+      },
+      "oneway_pieces": 26316,
+      "walkways": {
+        "ways": {
+          "footway": 26020,
+          "pedestrian": 1473,
+          "steps": 5450
+        },
+        "segments": 231793,
+        "kept": 139519
+      },
+      "triangles": {
+        "total": 4511765,
+        "buildings": 1436904,
+        "road_by_material": {
+          "1": 2019584,
+          "3": 134513,
+          "4": 893590
+        }
+      }
     },
     "spawn_lanes": {
       "cars": 26,
       "unmeasured": 0,
-      "max_centerline_m": 3.2,
+      "max_centerline_m": 4.5,
       "max_heading_err_deg": 0.24,
       "body_off_ribbon": 0,
+      "oneway_cars": 20,
+      "wrong_way": 0,
+      "right_of_centre_on_two_way": 0,
+      "max_wheel_gap_m": 0.079,
+      "max_abs_pitch_deg": 8.891,
       "player_to_first_car_m": 3.0
     }
   },
@@ -262,14 +323,14 @@
   ],
   "counts": {
     "osm_buildings": 119432,
-    "osm_roads": 35961,
-    "buildings": 71955,
-    "roads": 22317,
-    "bridges": 2792,
-    "tunnels_open_cut": 150,
-    "water": 882,
-    "tiles": 2371,
-    "triangles": 2826792
+    "osm_roads": 75339,
+    "buildings": 72873,
+    "roads": 53419,
+    "bridges": 4286,
+    "tunnels_open_cut": 282,
+    "water": 873,
+    "tiles": 3168,
+    "triangles": 4511765
   },
   "landscape": {
     "verts_x": 3025,
@@ -307,9 +368,9 @@
     "The warp is separable: scale_x depends only on easting and scale_y only on northing, plus a smooth harbour widening. Islands that share a meridian with the core cannot be 1:10 on both axes without folding the core or pinching it.",
     "Tunnels, including cross-harbour tubes, are open cuts. The deck is the chord between the portals, clamped so it stays above the water plane. There is no bored tunnel and no tunnel roof.",
     "Building courtyards (OSM inner rings) are filled. building:part footprints may still overlap the parent footprint when the part is taller.",
-    "Residential, service, footway, path and steps are omitted. Cheung Chau and Lamma only keep unclassified streets, so driving there is local. There is no ferry; walk or fly between islands.",
+    "Residential, living_street and service roads are drivable (service minus parking aisles, drive-throughs and emergency access). footway, pedestrian and steps are thin walk strips on the terrain, not in the road graph; path, sidewalk and crossing are skipped. There is no ferry; walk or fly between islands.",
     "Terrain heights are SRTM 1 arc-second, not the Lands Department DTM. Land and sea come from OSM natural=coastline inside the Geofabrik extract polygon (SRTM > 1.5 m outside it, i.e. Shenzhen); sea is a synthetic shelf from -2 m at the shore to about -10 m, not surveyed bathymetry. Low land is clamped to +0.6 m.",
-    "Minimum road widths (3.2 m / 8 m) are cut out of building footprints, so dense blocks lose a strip along the carriageway.",
+    "Lane widths scale with the warp across the road, floored at 3.0 m per lane; the ribbons and junction fills plus a margin are cut out of building footprints.",
     "HLOD meshes are not built by this script. The Unreal baker assigns an HLOD layer; generating proxies is a separate editor command.",
     "This environment did not launch Unreal Editor, so the bake, character, cars, helicopter and frame rate were not played."
   ],
