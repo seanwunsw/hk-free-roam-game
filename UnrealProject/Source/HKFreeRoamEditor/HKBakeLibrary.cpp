@@ -631,8 +631,11 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	};
 	auto Face = [&](const FVector3f& A, const FVector3f& B, const FVector3f& C, const FVector3f& D, const FVector3f& Normal)
 	{
-		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(B, Normal, FVector2f(1, 0)), Vertex(C, Normal, FVector2f(1, 1)));
-		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(C, Normal, FVector2f(1, 1)), Vertex(D, Normal, FVector2f(0, 1)));
+		// The corners below are listed counter-clockwise seen from outside. UE's face normal is
+		// Cross(P2 - P0, P1 - P0) (see AppendPrim), so emit them reversed or every face points in
+		// and the body renders inside out.
+		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(C, Normal, FVector2f(1, 1)), Vertex(B, Normal, FVector2f(1, 0)));
+		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(D, Normal, FVector2f(0, 1)), Vertex(C, Normal, FVector2f(1, 1)));
 	};
 	const FVector3f Min(-215.f, -95.f, 20.f);
 	const FVector3f Max(215.f, 95.f, 90.f);
@@ -658,6 +661,13 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	{
 		FReferenceSkeletonModifier Modifier(Skeleton);
 		Modifier.Add(FMeshBoneInfo(TEXT("Root"), TEXT("Root"), INDEX_NONE), FTransform::Identity);
+		// One bone per wheel, at the origin; AHKCar's AdditionalOffset places each wheel. Chaos
+		// switches off simulation and collision on the physics body of every wheel bone, so the
+		// wheels must not share Root, the bone that carries the chassis body.
+		for (const FName& WheelBone : AHKCar::WheelBoneNames())
+		{
+			Modifier.Add(FMeshBoneInfo(WheelBone, WheelBone.ToString(), 0), FTransform::Identity);
+		}
 	}
 	if (Skeleton->GetReferenceSkeleton().GetNum() <= 0)
 	{

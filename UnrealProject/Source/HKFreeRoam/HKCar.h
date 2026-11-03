@@ -34,6 +34,9 @@ public:
 	void SetVehicleMesh(USkeletalMesh* NewMesh, UPhysicsAsset* PhysicsAsset);
 	void ApplyPaint(UMaterialInterface* BodyMaterial, UMaterialInterface* WheelMaterial);
 
+	// Skeleton bones the wheels attach to, in WheelSetups order (FL, FR, RL, RR).
+	static const TArray<FName>& WheelBoneNames();
+
 private:
 	UChaosWheeledVehicleMovementComponent* Movement() const;
 	void ConfigureMechanical();
@@ -41,6 +44,7 @@ private:
 	void Park();
 	void HoldIfGroundUnloaded();
 	void PatchWheelBones();
+	void EnableChassisPhysics();
 	void UpdateWheelVisuals(float DeltaSeconds);
 
 	UPROPERTY(VisibleAnywhere, Category = "HK")

@@ -419,3 +419,27 @@ SM6 目標同路面非 Nanite 喺 `fix/road-collision`，呢個 branch 冇改嗰
 - 保留 ±3 米限制，所以設計坡度超標比舊解法略高（1.82% vs 1.29%）。
 - 路面路口差（全部，連橋）最大仍有 28.6 米，係橋同地面路嘅接觸位，未處理。
 - 車泊喺左線係按「車頭方向嘅左邊」，冇讀 `oneway`，單程路可能泊錯邊。
+
+## 上到車但係車唔郁（branch `fix/car-drive`，2026-11-03）
+
+Sean 部 PC 用 `54535be` build 同烘焙成功，撳 F 上到車，但係 HUD 一直 `0 km/h`，車身好似斜咗、浮喺路邊。
+
+### 根本原因
+
+1. **車身冇開物理模擬**：`AWheeledVehiclePawn` 建構時設 `Mesh->BodyInstance.bSimulatePhysics = false`。UE 官方設定步驟要求喺 mesh 剔 Simulate Physics。`AHKCar` 由頭到尾冇 call `SetSimulatePhysics(true)`（成個 source 只有 `HKHelicopter` 有），所以車身係 kinematic，Chaos 加幾多扭力都推唔郁，車停喺烘焙位置（路面 +1 米，唔跟路斜），所以睇落斜咗、浮咗。
+2. **四個轆都綁喺 `Root`，即係車身嗰塊 physics body**：Chaos `FixupSkeletalMesh` 會將每個「轆骨」嘅 physics body 設做唔碰撞（`ECR_Ignore`）同唔模擬（`SetInstanceSimulatePhysics(false)`）。轆骨同車身共用 `Root`，即係將車身本身關咗。
+3. 附帶：`SM_HKChassis` 六塊面全部反轉（用返 `AppendPrim` 嗰條 UE 規則 `Cross(P2-P0, P1-P0)` 計，6/6 向入），所以由上面睇見到車廂入面，好似「反轉」。
+
+之前寫「手掣冇拉所以車溜走」係估錯：車身根本冇模擬，唔會溜。
+
+### 修正
+
+- `AHKCar::EnableChassisPhysics()`（`BeginPlay`）：恢復每塊 body 嘅碰撞，然後 `SetSimulatePhysics(true)`。舊地圖都有效。
+- 烘焙：骨架加 `Wheel_FL/FR/RL/RR`（`Root` 嘅子骨，喺原點，冇 physics body），轆改綁呢四條骨，位置照用 `AdditionalOffset`。舊地圖冇呢四條骨就退返 `Root`，log 會提你重新烘焙。
+- 烘焙：車身六塊面改返正確方向。
+- 泊住嘅車：`BeginPlay` 照 `Park()`（腳掣 + 手掣），而且立即做 `HoldIfGroundUnloaded()`，避免未載入地面就跌落去。
+
+### 未測試
+
+- **未 build、未 PIE**。呢部機冇 Unreal。要確認：揸得郁、轉彎、泊住嘅車唔溜、落車再上車。
+- 轆彈簧 `SpringRate = 45000` 比 Chaos 預設（250）硬好多，揸起上嚟可能好硬或者震；今次冇改。

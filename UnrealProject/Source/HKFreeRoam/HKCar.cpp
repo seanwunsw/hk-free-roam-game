@@ -12,6 +12,7 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -75,7 +76,8 @@ void AHKCar::ConfigureMechanical()
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		Move->WheelSetups[Index].WheelClass = Classes[Index];
-		Move->WheelSetups[Index].BoneName = TEXT("Root");
+		// Bakes before the wheel bones only have Root; PatchWheelBones falls back to it.
+		Move->WheelSetups[Index].BoneName = WheelBoneNames()[Index];
 		Move->WheelSetups[Index].AdditionalOffset = Offsets[Index];
 	}
 
@@ -110,6 +112,12 @@ void AHKCar::ConfigureMechanical()
 		Steering->AddKey(0.f, 1.f);
 		Steering->AddKey(2000.f, 0.65f);
 	}
+}
+
+const TArray<FName>& AHKCar::WheelBoneNames()
+{
+	static const TArray<FName> Names = {FName(TEXT("Wheel_FL")), FName(TEXT("Wheel_FR")), FName(TEXT("Wheel_RL")), FName(TEXT("Wheel_RR"))};
+	return Names;
 }
 
 UChaosWheeledVehicleMovementComponent* AHKCar::Movement() const
@@ -160,14 +168,35 @@ void AHKCar::BeginPlay()
 		PatchWheelBones();
 	}
 
-	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	GetMesh()->SetCollisionObjectType(ECC_Vehicle);
-	GetMesh()->SetCollisionResponseToAllChannels(ECR_Block);
-	GetMesh()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	EnableChassisPhysics();
 	if (!bOccupied)
 	{
 		Park();
+		HoldIfGroundUnloaded();
 	}
+}
+
+void AHKCar::EnableChassisPhysics()
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Body->SetCollisionObjectType(ECC_Vehicle);
+	Body->SetCollisionResponseToAllChannels(ECR_Block);
+	Body->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	// Chaos FixupSkeletalMesh sets every physics body that sits on a wheel bone to ignore all
+	// channels and stop simulating. Older bakes put all four wheels on Root, the chassis bone, so
+	// restore the chassis body itself, not only the component default.
+	for (FBodyInstance* Instance : Body->Bodies)
+	{
+		if (Instance)
+		{
+			Instance->SetResponseToAllChannels(ECR_Block);
+			Instance->SetResponseToChannel(ECC_Camera, ECR_Ignore);
+		}
+	}
+	// AWheeledVehiclePawn leaves the mesh kinematic (bSimulatePhysics = false). Chaos only moves a
+	// simulating chassis, so without this throttle does nothing and the car sits at 0 km/h.
+	Body->SetSimulatePhysics(true);
 }
 
 void AHKCar::PatchWheelBones()
@@ -178,13 +207,24 @@ void AHKCar::PatchWheelBones()
 	{
 		return;
 	}
-	const FName Bone = Skel->GetRefSkeleton().GetBoneName(0);
-	bool bChanged = false;
-	for (FChaosWheelSetup& Setup : Move->WheelSetups)
+	const FReferenceSkeleton& Ref = Skel->GetRefSkeleton();
+	const TArray<FName>& Wheels = WheelBoneNames();
+	bool bWheelBones = true;
+	for (const FName& Wheel : Wheels)
 	{
-		if (Setup.BoneName != Bone)
+		bWheelBones &= Ref.FindBoneIndex(Wheel) != INDEX_NONE;
+	}
+	if (!bWheelBones)
+	{
+		UE_LOG(LogHK, Warning, TEXT("Car %s: skeleton has no wheel bones, using %s. Re-bake the world."), *GetName(), *Ref.GetBoneName(0).ToString());
+	}
+	bool bChanged = false;
+	for (int32 Index = 0; Index < Move->WheelSetups.Num(); ++Index)
+	{
+		const FName Bone = bWheelBones && Wheels.IsValidIndex(Index) ? Wheels[Index] : Ref.GetBoneName(0);
+		if (Move->WheelSetups[Index].BoneName != Bone)
 		{
-			Setup.BoneName = Bone;
+			Move->WheelSetups[Index].BoneName = Bone;
 			bChanged = true;
 		}
 	}
