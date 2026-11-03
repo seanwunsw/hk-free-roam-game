@@ -347,8 +347,10 @@ void AHKCar::HoldIfGroundUnloaded()
 	// Without ground a parked car would fall to KillZ and be destroyed, so hold it in place.
 	FHitResult Ground;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(HKCarGround), false, this);
-	const FVector Start = GetActorLocation();
-	const bool bGround = GetWorld()->LineTraceSingleByChannel(Ground, Start, Start - FVector(0.f, 0.f, 500.f), ECC_Visibility, Params);
+	// The actor origin is the wheel contact plane, 2 cm above the road at spawn. Start the trace
+	// 1 m higher so a slightly sunk or pitched car still finds the road under it.
+	const FVector Start = GetActorLocation() + FVector(0.f, 0.f, 100.f);
+	const bool bGround = GetWorld()->LineTraceSingleByChannel(Ground, Start, Start - FVector(0.f, 0.f, 600.f), ECC_Visibility, Params);
 	UPrimitiveComponent* Body = GetMesh();
 	Body->SetEnableGravity(bGround);
 	if (!bGround)

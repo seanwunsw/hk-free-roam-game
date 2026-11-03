@@ -71,6 +71,8 @@ struct FHKSpawn
 	double Y = 0.0;
 	double Z = 0.0;
 	double Yaw = 0.0;
+	// Cars only: nose-up degrees so all four wheels rest on a sloped road.
+	double Pitch = 0.0;
 };
 
 enum class EHKMeshCollision : uint8
@@ -150,7 +152,7 @@ UMaterial* FinishMaterial(UMaterial* Material)
 	return Material;
 }
 
-UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool bNanite, bool bTranslucent, bool bWorldPos)
+UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool bNanite, bool bTranslucent, bool bWorldPos, bool bUV1 = false)
 {
 	const FString PackageName = FString::Printf(TEXT("/Game/HK/Materials/%s"), AssetName);
 	UPackage* Package = CreatePackage(*PackageName);
@@ -168,7 +170,7 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	Custom->OutputType = CMOT_Float3;
 	Custom->Description = AssetName;
 	Custom->Code = Code;
-	// The constructor adds one unnamed input. Clear it so Inputs[0..2] are UV, VertColor, WorldPos.
+	// The constructor adds one unnamed input. Clear it so the inputs are UV, VertColor, then the optional WorldPos and UV1.
 	Custom->Inputs.Reset();
 	FCustomInput& UV = Custom->Inputs.AddDefaulted_GetRef();
 	UV.InputName = TEXT("UV");
@@ -187,7 +189,17 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 		WorldIn.InputName = TEXT("WorldPos");
 		UMaterialExpressionWorldPosition* World = NewObject<UMaterialExpressionWorldPosition>(Material);
 		AddExpression(Material, World);
-		Custom->Inputs[2].Input.Connect(0, World);
+		Custom->Inputs.Last().Input.Connect(0, World);
+	}
+	if (bUV1)
+	{
+		// Road meshes carry (ribbon width, lane marking code) in UV channel 1.
+		FCustomInput& Uv1In = Custom->Inputs.AddDefaulted_GetRef();
+		Uv1In.InputName = TEXT("UV1");
+		UMaterialExpressionTextureCoordinate* TexCoord1 = NewObject<UMaterialExpressionTextureCoordinate>(Material);
+		TexCoord1->CoordinateIndex = 1;
+		AddExpression(Material, TexCoord1);
+		Custom->Inputs.Last().Input.Connect(0, TexCoord1);
 	}
 	UMaterialExpressionConstant* Rough = NewObject<UMaterialExpressionConstant>(Material);
 	Rough->R = bTranslucent ? 0.15f : 0.75f;
@@ -368,6 +380,10 @@ UStaticMesh* BuildMesh(
 		Model.BuildSettings.bRecomputeNormals = false;
 		Model.BuildSettings.bRecomputeTangents = true;
 		Model.BuildSettings.DistanceFieldResolutionScale = 0.25f;
+		// UV channel 1 carries road lane data. Generated lightmap UVs would overwrite it, and
+		// half-precision UVs cannot hold arc lengths of kilometres (uv.x is metres along).
+		Model.BuildSettings.bGenerateLightmapUVs = false;
+		Model.BuildSettings.bUseFullPrecisionUVs = true;
 	}
 	// 5.6 and 5.8 both have Build(const FBuildParameters&) and Build(bool, TArray<FText>*). One argument does not match either.
 	Mesh->Build(true, nullptr);
@@ -436,6 +452,10 @@ bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPoly
 		}
 		Normals[Instance] = Normal;
 		UVs.Set(Instance, 0, Prim.UVs[Index]);
+		if (UVs.GetNumChannels() > 1)
+		{
+			UVs.Set(Instance, 1, Prim.UV1s.Num() == Count ? Prim.UV1s[Index] : FVector2f::ZeroVector);
+		}
 		Colors[Instance] = Prim.Colors[Index];
 		Instances[Index] = Instance;
 		Box += FVector(Position);
@@ -540,7 +560,8 @@ UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMateri
 	FMeshDescription Description;
 	FStaticMeshAttributes Attributes(Description);
 	Attributes.Register();
-	Attributes.GetVertexInstanceUVs().SetNumChannels(1);
+	// Channel 0: metres along / across. Channel 1: road width and lane marking code (zero elsewhere).
+	Attributes.GetVertexInstanceUVs().SetNumChannels(2);
 	const FPolygonGroupID Group = Description.CreatePolygonGroup();
 	Attributes.GetPolygonGroupMaterialSlotNames()[Group] = Slot;
 	TArray<FKConvexElem> Hulls;
@@ -588,6 +609,7 @@ void ReadSpawn(const TSharedPtr<FJsonObject>& Object, FHKSpawn& Spawn)
 	Object->TryGetNumberField(TEXT("y_m"), Spawn.Y);
 	Object->TryGetNumberField(TEXT("z_m"), Spawn.Z);
 	Object->TryGetNumberField(TEXT("yaw_deg"), Spawn.Yaw);
+	Object->TryGetNumberField(TEXT("pitch_deg"), Spawn.Pitch);
 }
 
 void ReadSpawnArray(const TSharedPtr<FJsonObject>& Root, const TCHAR* Field, TArray<FHKSpawn>& Out)
@@ -613,7 +635,8 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	FMeshDescription Description;
 	FStaticMeshAttributes Attributes(Description);
 	Attributes.Register();
-	Attributes.GetVertexInstanceUVs().SetNumChannels(1);
+	// Channel 0: metres along / across. Channel 1: road width and lane marking code (zero elsewhere).
+	Attributes.GetVertexInstanceUVs().SetNumChannels(2);
 	const FPolygonGroupID Group = Description.CreatePolygonGroup();
 	Attributes.GetPolygonGroupMaterialSlotNames()[Group] = TEXT("Body");
 	TVertexAttributesRef<FVector3f> Positions = Attributes.GetVertexPositions();
@@ -921,12 +944,63 @@ bool UHKBakeLibrary::BakeWorld()
 
 	UMaterial* Facade = MakeCustomMaterial(
 		TEXT("M_Facade"),
-		TEXT("float roof = step(0.5, VertColor.a);\nfloat wx = frac(UV.x * 0.42);\nfloat wy = frac(UV.y * 0.50);\nfloat window = step(0.16, wx) * step(wx, 0.84) * step(0.12, wy) * step(wy, 0.82);\nfloat3 tint = VertColor.rgb;\nfloat3 wall = tint * lerp(0.45, 0.72, wy);\nfloat3 glass = tint * 0.12 + float3(0.04, 0.06, 0.08);\nfloat3 facade = lerp(wall, glass, window);\nreturn lerp(facade, tint * float3(0.32, 0.31, 0.30), roof);\n"),
+		TEXT("float roof = step(0.5, VertColor.a);\n")
+			TEXT("float wx = frac(UV.x * 0.42);\n")
+			TEXT("float wy = frac(UV.y * 0.50);\n")
+			TEXT("float window = step(0.18, wx) * step(wx, 0.82) * step(0.18, wy) * step(wy, 0.78);\n")
+			TEXT("float3 tint = VertColor.rgb;\n")
+			TEXT("float band = step(0.90, wy);\n")
+			TEXT("float3 wall = tint * lerp(0.78, 0.96, wy) * (1.0 - 0.12 * band);\n")
+			TEXT("float3 glass = tint * 0.14 + float3(0.05, 0.07, 0.09);\n")
+			TEXT("float3 facade = lerp(wall, glass, window);\n")
+			TEXT("float3 roofc = lerp(float3(0.52, 0.52, 0.50), tint, 0.25);\n")
+			TEXT("return lerp(facade, roofc, roof);\n"),
 		true, false, false);
+	// Road, junction fill, pavement and walkway prims share this material.
+	// UV: metres along, metres from the left edge. UV1: ribbon width, marking code
+	// (split metres + 64 * lanes left + 1024 * lanes right). VertColor: R markings on,
+	// G pavement concrete, B steps. HK style: yellow edge lines, white dashed lane lines,
+	// double white centre line only where both directions share the ribbon.
 	UMaterial* Road = MakeCustomMaterial(
 		TEXT("M_Road"),
-		TEXT("float edge = saturate(step(UV.y, 0.08) + step(0.92, UV.y));\nfloat dash = step(0.45, frac(UV.x * 0.12));\nfloat center = step(0.46, UV.y) * step(UV.y, 0.54) * dash;\nfloat3 asphalt = float3(0.09, 0.09, 0.095);\nfloat3 paint = float3(0.85, 0.80, 0.45);\nreturn lerp(asphalt, paint, saturate(edge + center));\n"),
-		true, false, false);
+		TEXT("float W = max(UV1.x, 0.01);\n")
+			TEXT("float code = UV1.y;\n")
+			TEXT("float blk = floor(code / 64.0);\n")
+			TEXT("float ll = fmod(blk, 16.0);\n")
+			TEXT("float lr = floor(code / 1024.0);\n")
+			TEXT("float s = code - 64.0 * blk;\n")
+			TEXT("float y = UV.y;\n")
+			TEXT("float along = UV.x;\n")
+			TEXT("float mark = step(0.5, VertColor.r);\n")
+			TEXT("float pave = step(0.5, VertColor.g);\n")
+			TEXT("float stair = step(0.5, VertColor.b);\n")
+			TEXT("float edge = (step(0.25, y) * step(y, 0.37) + step(W - 0.37, y) * step(y, W - 0.25)) * step(1.5, W);\n")
+			TEXT("float dash = step(frac(along / 8.0), 0.44);\n")
+			TEXT("float div = 0.0;\n")
+			TEXT("if (ll > 1.5 && y < s)\n")
+			TEXT("{\n")
+			TEXT("\tfloat lw = s / ll;\n")
+			TEXT("\tfloat k = round(y / lw);\n")
+			TEXT("\tdiv = step(abs(y - k * lw), 0.05) * step(0.5, k) * step(k, ll - 0.5);\n")
+			TEXT("}\n")
+			TEXT("if (lr > 1.5 && y > s)\n")
+			TEXT("{\n")
+			TEXT("\tfloat rw = (W - s) / lr;\n")
+			TEXT("\tfloat k = round((y - s) / rw);\n")
+			TEXT("\tdiv = max(div, step(abs(y - s - k * rw), 0.05) * step(0.5, k) * step(k, lr - 0.5));\n")
+			TEXT("}\n")
+			TEXT("float centre = step(0.5, ll) * step(0.5, lr) * step(abs(abs(y - s) - 0.15), 0.05);\n")
+			TEXT("float3 asphalt = float3(0.085, 0.085, 0.09);\n")
+			TEXT("float3 white = float3(0.80, 0.80, 0.78);\n")
+			TEXT("float3 yellow = float3(0.78, 0.60, 0.12);\n")
+			TEXT("float3 c = lerp(asphalt, yellow, edge * mark);\n")
+			TEXT("c = lerp(c, white, saturate(div * dash + centre) * mark);\n")
+			TEXT("float joint = saturate(step(frac(along / 1.2), 0.04) + step(frac(y / 1.2), 0.04));\n")
+			TEXT("float3 concrete = float3(0.42, 0.41, 0.39) * (1.0 - 0.25 * joint);\n")
+			TEXT("float tread = step(0.5, frac(along / 0.6));\n")
+			TEXT("concrete = lerp(concrete, concrete * lerp(0.75, 1.05, tread), stair);\n")
+			TEXT("return lerp(c, concrete, pave);\n"),
+		true, false, false, true);
 	UMaterial* WaterMat = MakeCustomMaterial(
 		TEXT("M_Water"),
 		TEXT("return float3(0.04, 0.16, 0.24);\n"),
@@ -1138,8 +1212,11 @@ bool UHKBakeLibrary::BakeWorld()
 	for (const FHKSpawn& Car : Cars)
 	{
 		AHKCar* Actor = World->SpawnActor<AHKCar>(
-			HKAxes::GameToUnreal(Car.X, Car.Y, Car.Z) + FVector(0.0, 0.0, 100.0),
-			FRotator(0.f, HKAxes::GameYawToUnreal(Car.Yaw), 0.f), Params);
+			// z_m is already the wheel contact plane (the actor origin) resting on the road plus
+			// 2 cm, pitched to the slope. The old +1 m lift left parked cars hanging in the air:
+			// before the chassis simulated nothing pulled them down, and now they would drop 1 m.
+			HKAxes::GameToUnreal(Car.X, Car.Y, Car.Z),
+			FRotator(Car.Pitch, HKAxes::GameYawToUnreal(Car.Yaw), 0.f), Params);
 		if (!Actor)
 		{
 			continue;
