@@ -64,7 +64,10 @@ def test_agreement_counts_both_directions():
     assert out["sea_below_seabed_pct"] == 50.0
 
 
-@pytest.mark.skipif(not (PROCESSED / "land_mask.json").exists(), reason="pipeline not run")
+@pytest.mark.skipif(
+    not (PROCESSED / "land_mask.json").exists() or not (PROCESSED / "logs" / "report.json").exists(),
+    reason="pipeline not run",
+)
 def test_processed_terrain_follows_osm_coast_and_harbour_stays_wide():
     report = json.loads((PROCESSED / "logs" / "report.json").read_text(encoding="utf-8"))
     coast_report = report["coast"]
