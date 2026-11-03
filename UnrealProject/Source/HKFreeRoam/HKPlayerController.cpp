@@ -22,6 +22,7 @@
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
 #include "Kismet/GameplayStatics.h"
+#include "Scalability.h"
 
 AHKPlayerController::AHKPlayerController()
 {
@@ -422,24 +423,15 @@ void AHKPlayerController::OnCycleQuality()
 void AHKPlayerController::ApplyQuality(int32 Index)
 {
 	QualityIndex = Index == 0 ? 0 : 1;
-	if (!GEngine)
+	// HUD 中 is engine High (2), which keeps software Lumen. Low is the engine Low preset.
+	// Neither step sets r.Nanite 0: that draws fallback meshes.
+	const int32 Level = QualityIndex == 0 ? 0 : 2;
+	Scalability::FQualityLevels Levels(true);
+	Levels.SetFromSingleQualityLevel(Level);
+	Scalability::SetQualityLevels(Levels);
+	if (GEngine)
 	{
-		return;
-	}
-	GEngine->Exec(GetWorld(), TEXT("r.Lumen.HardwareRayTracing 0"));
-	if (QualityIndex == 0)
-	{
-		GEngine->Exec(GetWorld(), TEXT("r.DynamicGlobalIlluminationMethod 0"));
-		GEngine->Exec(GetWorld(), TEXT("r.ReflectionMethod 0"));
-		GEngine->Exec(GetWorld(), TEXT("r.Shadow.Virtual.Enable 0"));
-		GEngine->Exec(GetWorld(), TEXT("r.Nanite 0"));
-	}
-	else
-	{
-		GEngine->Exec(GetWorld(), TEXT("r.DynamicGlobalIlluminationMethod 1"));
-		GEngine->Exec(GetWorld(), TEXT("r.ReflectionMethod 1"));
-		GEngine->Exec(GetWorld(), TEXT("r.Shadow.Virtual.Enable 1"));
-		GEngine->Exec(GetWorld(), TEXT("r.Nanite 1"));
+		GEngine->Exec(GetWorld(), TEXT("r.Lumen.HardwareRayTracing 0"));
 	}
 }
 

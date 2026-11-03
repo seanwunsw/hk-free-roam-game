@@ -80,7 +80,7 @@ HK.ToLatLon
 
 `HK.ToGame` 第一個數係緯度。如果第一個數絕對值大過 90，就會當佢係經度。其他地區可以用 `HK.Go <id>`，id 同 `data/config/world.json` 一樣，例如 `ShaTin`、`Airport`、`Lamma`。
 
-預設畫質係中：Lumen（software，關掉 hardware ray tracing）、Nanite、virtual shadow。F9 切去低會關掉 Lumen、Nanite 同 virtual shadow。目標係 DX12、RTX 3060、中畫質大約 60 fps；呢個幀數未喺真機量過。
+預設畫質係中，對應引擎 scalability High（level 2）：software Lumen 用 Global Distance Field（`r.Lumen.HardwareRayTracing=0`、`r.Lumen.TraceMeshSDFs=0`）、Nanite、virtual shadow。F9 去低係引擎 Low，Nanite 保持開。量度方法同而家嘅幀數見 `docs/PERFORMANCE.md`。
 
 ## 座標
 
