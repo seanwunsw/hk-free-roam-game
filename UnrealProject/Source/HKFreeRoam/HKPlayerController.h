@@ -46,6 +46,7 @@ private:
 	void OnMove(const struct FInputActionValue& Value);
 	void OnMoveCompleted(const struct FInputActionValue& Value);
 	void OnLook(const struct FInputActionValue& Value);
+	void OnZoom(const struct FInputActionValue& Value);
 	void OnJumpStarted();
 	void OnJumpCompleted();
 	void OnSprintStarted();
@@ -72,6 +73,8 @@ private:
 	TObjectPtr<UInputAction> MoveAction;
 	UPROPERTY()
 	TObjectPtr<UInputAction> LookAction;
+	UPROPERTY()
+	TObjectPtr<UInputAction> ZoomAction;
 	UPROPERTY()
 	TObjectPtr<UInputAction> JumpAction;
 	UPROPERTY()

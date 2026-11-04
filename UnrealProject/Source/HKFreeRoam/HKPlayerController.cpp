@@ -77,6 +77,8 @@ void AHKPlayerController::BuildInput()
 	MoveAction->ValueType = EInputActionValueType::Axis2D;
 	LookAction = NewObject<UInputAction>(this, TEXT("IA_Look"));
 	LookAction->ValueType = EInputActionValueType::Axis2D;
+	ZoomAction = NewObject<UInputAction>(this, TEXT("IA_Zoom"));
+	ZoomAction->ValueType = EInputActionValueType::Axis1D;
 	JumpAction = NewObject<UInputAction>(this, TEXT("IA_Jump"));
 	JumpAction->ValueType = EInputActionValueType::Boolean;
 	SprintAction = NewObject<UInputAction>(this, TEXT("IA_Sprint"));
@@ -126,6 +128,8 @@ void AHKPlayerController::BuildInput()
 	UInputModifierScalar* Scale = NewObject<UInputModifierScalar>(AlwaysContext);
 	Scale->Scalar = FVector(0.08, 0.08, 1.0);
 	Look.Modifiers.Add(Scale);
+	// Scroll wheel: +1 per notch away from the user (zoom in).
+	AlwaysContext->MapKey(ZoomAction, EKeys::MouseWheelAxis);
 	AlwaysContext->MapKey(InteractAction, EKeys::F);
 	AlwaysContext->MapKey(MapAction, EKeys::M);
 	AlwaysContext->MapKey(HelpAction, EKeys::F1);
@@ -144,6 +148,7 @@ void AHKPlayerController::SetupInputComponent()
 	Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AHKPlayerController::OnMove);
 	Input->BindAction(MoveAction, ETriggerEvent::Completed, this, &AHKPlayerController::OnMoveCompleted);
 	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &AHKPlayerController::OnLook);
+	Input->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &AHKPlayerController::OnZoom);
 	Input->BindAction(JumpAction, ETriggerEvent::Started, this, &AHKPlayerController::OnJumpStarted);
 	Input->BindAction(JumpAction, ETriggerEvent::Completed, this, &AHKPlayerController::OnJumpCompleted);
 	Input->BindAction(SprintAction, ETriggerEvent::Started, this, &AHKPlayerController::OnSprintStarted);
@@ -285,6 +290,23 @@ void AHKPlayerController::OnLook(const FInputActionValue& Value)
 	if (AHKHelicopter* Heli = Cast<AHKHelicopter>(GetPawn()))
 	{
 		Heli->SetMouseCyclic(FMath::Clamp(Look.X * 0.35f, -1.f, 1.f), FMath::Clamp(-Look.Y * 0.35f, -1.f, 1.f));
+	}
+}
+
+void AHKPlayerController::OnZoom(const FInputActionValue& Value)
+{
+	const float Notches = Value.Get<float>();
+	if (bMapOpen || FMath::IsNearlyZero(Notches))
+	{
+		return;
+	}
+	if (AHKCar* Car = Cast<AHKCar>(GetPawn()))
+	{
+		Car->AddCameraZoom(Notches);
+	}
+	else if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
+	{
+		Walker->AddCameraZoom(Notches);
 	}
 }
 

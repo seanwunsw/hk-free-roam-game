@@ -28,5 +28,6 @@ private:
 	float StreamTimer = 0.f;
 	int32 LoadedSpatialActors = 0;
 	bool bStreamingComplete = true;
+	int32 CountTick = 0;
 	bool bHasWorldPartition = false;
 };

@@ -67,7 +67,7 @@ void AHKFreeRoamHUD::UpdateStreaming()
 		return;
 	}
 	StreamTimer = 0.f;
-	LoadedSpatialActors = 0;
+	const bool bWasComplete = bStreamingComplete;
 	bHasWorldPartition = false;
 	bStreamingComplete = true;
 	if (UWorldPartitionSubsystem* Partition = GetWorld()->GetSubsystem<UWorldPartitionSubsystem>())
@@ -75,6 +75,13 @@ void AHKFreeRoamHUD::UpdateStreaming()
 		bHasWorldPartition = true;
 		bStreamingComplete = Partition->IsStreamingCompleted();
 	}
+	// Counting walks every actor: every second while streaming, every 5 s once it has settled.
+	if (++CountTick < 5 && bStreamingComplete && bWasComplete && LoadedSpatialActors > 0)
+	{
+		return;
+	}
+	CountTick = 0;
+	LoadedSpatialActors = 0;
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
 		if (It->ActorHasTag(TEXT("HKSpatial")))
@@ -190,14 +197,14 @@ void AHKFreeRoamHUD::DrawHelp()
 {
 	const TCHAR* Lines[] = {
 		TEXT("HK Free Roam    F1 關閉"),
-		TEXT("步行  WASD 移動   Shift 跑   Space 跳   滑鼠望"),
+		TEXT("步行  WASD 移動   Shift 跑   Space 跳   滑鼠望   滾輪拉近／拉遠"),
 		TEXT("F 靠近車輛或直升機上車，再按 F 落車"),
-		TEXT("車  W 油門  S 煞車／倒車  A D 轉向  Space 手煞"),
+		TEXT("車  W 油門  S 煞車／倒車  A D 轉向  Space 手煞  滑鼠環迴望（停手自動回正）  滾輪拉近／拉遠"),
 		TEXT("直升機  滑鼠週期變距  A D 偏航  E Q 總距  H 懸停"),
 		TEXT("方向鍵或 I J K L 係直升機後備操控"),
 		TEXT("M 地圖，撳地圖傳送    F9 切換畫質"),
 		TEXT("Ctrl+1 至 0 傳送到地區    控制台 HK.Go 名稱")};
-	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.62f), 16.f, 16.f, 680.f, 176.f);
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.62f), 16.f, 16.f, 760.f, 176.f);
 	for (int32 Line = 0; Line < UE_ARRAY_COUNT(Lines); ++Line)
 	{
 		DrawText(Lines[Line], FLinearColor(0.94f, 0.94f, 0.9f), 26.f, 24.f + Line * 18.f, GEngine->GetSmallFont(), 1.05f);
