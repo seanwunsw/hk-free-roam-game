@@ -20,6 +20,7 @@ public:
 
 private:
 	void DrawMap(float X, float Y, float W, float H, bool bFull);
+	void DrawLocalMap(float X, float Y, float W, float H);
 	void DrawHelp();
 	void DrawReadout();
 	void UpdateStreaming();

@@ -41,7 +41,7 @@ from tools.pipeline.geometry import (
 from tools.pipeline.glbutil import write_glb
 from tools.pipeline import streetscape
 from tools.pipeline import coast as coastmask
-from tools.pipeline import labels
+from tools.pipeline import labels, minimap_tiles
 from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
 from tools.pipeline import spawns as spawn_rules
@@ -1893,6 +1893,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         labels.district_areas(warp, extracted.get("districts_ll", [])),
     )
     log(f"road names {json.dumps(labels.stats(names_doc))}")
+    local_map = minimap_tiles.draw_tiles(out / "minimap_tiles", landscape, is_land, height, roads, buildings, waters, log=log)
     mask = write_land_mask(out, config, land, extract, grids, log)
     dem = load_dem()
     harbour_rows = measure_harbour(warp, dem, is_land=mask.is_land) if dem is not None else []
@@ -1923,6 +1924,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         "road_heights": road_stats,
         "building_road_overlap": overlap,
         "road_names": names_doc,
+        "minimap_tiles": local_map,
         "notes": notes,
         "counts": {
             "osm_buildings": len(extracted["buildings_ll"]),
@@ -1990,6 +1992,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "spawns_file": "spawns.json",
         "landmarks_file": "landmarks.json",
         "road_names_file": "road_names.json",
+        "minimap_tiles": built["minimap_tiles"],
         "warp_lut": "warp_lut.bin",
     }
     (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

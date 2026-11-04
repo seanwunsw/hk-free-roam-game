@@ -103,6 +103,8 @@ void AHKPlayerController::BuildInput()
 	HelpAction->ValueType = EInputActionValueType::Boolean;
 	QualityAction = NewObject<UInputAction>(this, TEXT("IA_Quality"));
 	QualityAction->ValueType = EInputActionValueType::Boolean;
+	MinimapZoomAction = NewObject<UInputAction>(this, TEXT("IA_MinimapZoom"));
+	MinimapZoomAction->ValueType = EInputActionValueType::Boolean;
 
 	FootContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Foot"));
 	CarContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Car"));
@@ -134,6 +136,7 @@ void AHKPlayerController::BuildInput()
 	AlwaysContext->MapKey(MapAction, EKeys::M);
 	AlwaysContext->MapKey(HelpAction, EKeys::F1);
 	AlwaysContext->MapKey(QualityAction, EKeys::F9);
+	AlwaysContext->MapKey(MinimapZoomAction, EKeys::N);
 }
 
 void AHKPlayerController::SetupInputComponent()
@@ -168,6 +171,7 @@ void AHKPlayerController::SetupInputComponent()
 	Input->BindAction(MapAction, ETriggerEvent::Started, this, &AHKPlayerController::OnToggleMap);
 	Input->BindAction(HelpAction, ETriggerEvent::Started, this, &AHKPlayerController::OnToggleHelp);
 	Input->BindAction(QualityAction, ETriggerEvent::Started, this, &AHKPlayerController::OnCycleQuality);
+	Input->BindAction(MinimapZoomAction, ETriggerEvent::Started, this, &AHKPlayerController::OnToggleMinimapZoom);
 }
 
 void AHKPlayerController::BeginPlay()
@@ -425,6 +429,11 @@ void AHKPlayerController::OnHover()
 	{
 		Heli->ToggleHoverAssist();
 	}
+}
+
+void AHKPlayerController::OnToggleMinimapZoom()
+{
+	bMinimapZoomed = !bMinimapZoomed;
 }
 
 void AHKPlayerController::OnToggleMap()

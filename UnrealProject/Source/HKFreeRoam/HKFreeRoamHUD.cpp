@@ -35,8 +35,15 @@ void AHKFreeRoamHUD::DrawHUD()
 		: Aspect;
 
 	const float MiniW = 260.f;
-	const float MiniH = MiniW / FMath::Max(MapAspect, 0.1f);
-	DrawMap(Canvas->SizeX - MiniW - 24.f, 24.f, MiniW, MiniH, false);
+	if (Controller && Controller->IsMinimapZoomed() && Game && Game->HasMinimapTiles())
+	{
+		DrawLocalMap(Canvas->SizeX - MiniW - 24.f, 24.f, MiniW, MiniW);
+	}
+	else
+	{
+		const float MiniH = MiniW / FMath::Max(MapAspect, 0.1f);
+		DrawMap(Canvas->SizeX - MiniW - 24.f, 24.f, MiniW, MiniH, false);
+	}
 
 	if (bFullMapVisible)
 	{
@@ -216,6 +223,158 @@ void AHKFreeRoamHUD::DrawMap(float X, float Y, float W, float H, bool bFull)
 	DrawText(TEXT("N"), FLinearColor::White, X + 6.f, Y + 4.f, GEngine->GetSmallFont(), 1.f);
 }
 
+void AHKFreeRoamHUD::DrawLocalMap(float X, float Y, float W, float H)
+{
+	// About 1 km across, north up, centred on the player; the arrow turns with the pawn.
+	const double SpanM = 1000.0;
+	UHKGameInstance* Game = GetWorld()->GetGameInstance<UHKGameInstance>();
+	APawn* Pawn = GetOwningPawn();
+	DrawRect(FLinearColor(0.02f, 0.04f, 0.05f, 0.9f), X - 4.f, Y - 4.f, W + 8.f, H + 8.f);
+	if (!Game || !Pawn)
+	{
+		return;
+	}
+	DrawRect(Game->GetMinimapSeaColour(), X, Y, W, H);
+	const FVector2D Centre = HKAxes::UnrealToGame(Pawn->GetActorLocation());
+	const double MPerPx = SpanM / W;
+	const double ViewMinX = Centre.X - 0.5 * W * MPerPx;
+	const double ViewMaxX = Centre.X + 0.5 * W * MPerPx;
+	const double ViewMinY = Centre.Y - 0.5 * H * MPerPx;
+	const double ViewMaxY = Centre.Y + 0.5 * H * MPerPx;
+	const double TileM = Game->GetMinimapTileMetres();
+	double OriginX = 0, OriginY = 0;
+	Game->GetMinimapTileOrigin(OriginX, OriginY);
+	const int32 I0 = FMath::FloorToInt32((ViewMinX - OriginX) / TileM);
+	const int32 I1 = FMath::FloorToInt32((ViewMaxX - OriginX) / TileM);
+	const int32 J0 = FMath::FloorToInt32((ViewMinY - OriginY) / TileM);
+	const int32 J1 = FMath::FloorToInt32((ViewMaxY - OriginY) / TileM);
+	for (int32 J = J0; J <= J1; ++J)
+	{
+		for (int32 I = I0; I <= I1; ++I)
+		{
+			UTexture2D* Tile = Game->GetMinimapTile(I, J, Centre.X, Centre.Y);
+			if (!Tile)
+			{
+				continue;
+			}
+			const double TX0 = OriginX + I * TileM;
+			const double TY0 = OriginY + J * TileM;
+			const double X0 = FMath::Max(TX0, ViewMinX);
+			const double X1 = FMath::Min(TX0 + TileM, ViewMaxX);
+			const double Y0 = FMath::Max(TY0, ViewMinY);
+			const double Y1 = FMath::Min(TY0 + TileM, ViewMaxY);
+			if (X1 <= X0 || Y1 <= Y0)
+			{
+				continue;
+			}
+			// Tile rows run north to south.
+			const float U = (float)((X0 - TX0) / TileM);
+			const float V = (float)((TY0 + TileM - Y1) / TileM);
+			DrawTexture(Tile, X + (float)((X0 - ViewMinX) / MPerPx), Y + (float)((ViewMaxY - Y1) / MPerPx),
+				(float)((X1 - X0) / MPerPx), (float)((Y1 - Y0) / MPerPx), U, V, (float)((X1 - X0) / TileM), (float)((Y1 - Y0) / TileM));
+		}
+	}
+	auto ToScreen = [&](double Xm, double Ym)
+	{
+		return FVector2D(X + (Xm - ViewMinX) / MPerPx, Y + (ViewMaxY - Ym) / MPerPx);
+	};
+	auto Inside = [&](const FVector2D& P, float Margin)
+	{
+		return P.X >= X + Margin && P.X <= X + W - Margin && P.Y >= Y + Margin && P.Y <= Y + H - Margin;
+	};
+
+	// Up to 12 street names: bigger roads first, then the ones nearest the player, spaced apart.
+	const FHKMapLabels& Labels = Game->GetLabels();
+	TArray<int32> Visible;
+	Labels.RoadsInBox(ViewMinX, ViewMinY, ViewMaxX, ViewMaxY, Visible);
+	struct FCandidate
+	{
+		int32 Road;
+		int32 Rank;
+		double D2;
+		FVector2D Screen;
+	};
+	auto RankOf = [](const FString& Class)
+	{
+		if (Class.StartsWith(TEXT("motorway")) || Class.StartsWith(TEXT("trunk"))) return 0;
+		if (Class.StartsWith(TEXT("primary"))) return 1;
+		if (Class.StartsWith(TEXT("secondary"))) return 2;
+		if (Class.StartsWith(TEXT("tertiary"))) return 3;
+		return 4;
+	};
+	TArray<FCandidate> Candidates;
+	TSet<FString> SeenNames;
+	for (const int32 RoadIndex : Visible)
+	{
+		const FHKNamedRoad& Road = Labels.GetRoads()[RoadIndex];
+		double BestD2 = TNumericLimits<double>::Max();
+		FVector2D BestPoint = FVector2D::ZeroVector;
+		for (int32 K = 0; K + 1 < Road.Points.Num(); ++K)
+		{
+			const FVector2D Mid = 0.5 * (Road.Points[K] + Road.Points[K + 1]);
+			const double D2 = FVector2D::DistSquared(Mid, Centre);
+			if (D2 < BestD2 && Inside(ToScreen(Mid.X, Mid.Y), 18.f))
+			{
+				BestD2 = D2;
+				BestPoint = Mid;
+			}
+		}
+		if (BestD2 < TNumericLimits<double>::Max())
+		{
+			Candidates.Add({RoadIndex, RankOf(Road.Class), BestD2, ToScreen(BestPoint.X, BestPoint.Y)});
+		}
+	}
+	Candidates.Sort([](const FCandidate& A, const FCandidate& B) { return A.Rank != B.Rank ? A.Rank < B.Rank : A.D2 < B.D2; });
+	TArray<FVector2D> Placed;
+	UFont* Font = GEngine->GetSmallFont();
+	for (const FCandidate& Candidate : Candidates)
+	{
+		if (Placed.Num() >= 12)
+		{
+			break;
+		}
+		const FString& Name = Labels.NameZh(Candidate.Road).IsEmpty() ? Labels.NameEn(Candidate.Road) : Labels.NameZh(Candidate.Road);
+		if (Name.IsEmpty() || SeenNames.Contains(Name))
+		{
+			continue;
+		}
+		bool bCrowded = false;
+		for (const FVector2D& Other : Placed)
+		{
+			bCrowded |= FMath::Abs(Other.X - Candidate.Screen.X) < 70.f && FMath::Abs(Other.Y - Candidate.Screen.Y) < 16.f;
+		}
+		if (bCrowded)
+		{
+			continue;
+		}
+		float TW = 0.f, TH = 0.f;
+		GetTextSize(Name, TW, TH, Font, 0.85f);
+		const float LX = FMath::Clamp((float)Candidate.Screen.X - TW * 0.5f, X + 2.f, X + W - TW - 2.f);
+		const float LY = FMath::Clamp((float)Candidate.Screen.Y - TH * 0.5f, Y + 2.f, Y + H - TH - 2.f);
+		DrawText(Name, FLinearColor(0.f, 0.f, 0.f, 0.85f), LX + 1.f, LY + 1.f, Font, 0.85f);
+		DrawText(Name, FLinearColor(1.f, 1.f, 1.f), LX, LY, Font, 0.85f);
+		Placed.Add(Candidate.Screen);
+		SeenNames.Add(Name);
+	}
+
+	// Player arrow, pointing where the pawn faces (UE +X east, +Y south = screen right, down).
+	const FVector Forward = Pawn->GetActorForwardVector();
+	const FVector2D Dir = FVector2D(Forward.X, Forward.Y).GetSafeNormal();
+	const FVector2D Side(-Dir.Y, Dir.X);
+	const FVector2D Mid(X + W * 0.5f, Y + H * 0.5f);
+	const FVector2D Tip = Mid + Dir * 11.0;
+	const FVector2D Left = Mid - Dir * 7.0 + Side * 7.0;
+	const FVector2D Right = Mid - Dir * 7.0 - Side * 7.0;
+	const FVector2D Back = Mid - Dir * 3.0;
+	const FLinearColor ArrowColour(1.f, 0.25f, 0.15f, 1.f);
+	DrawLine(Tip.X, Tip.Y, Left.X, Left.Y, ArrowColour, 3.f);
+	DrawLine(Tip.X, Tip.Y, Right.X, Right.Y, ArrowColour, 3.f);
+	DrawLine(Left.X, Left.Y, Back.X, Back.Y, ArrowColour, 3.f);
+	DrawLine(Right.X, Right.Y, Back.X, Back.Y, ArrowColour, 3.f);
+	DrawText(TEXT("N"), FLinearColor::White, X + 6.f, Y + 4.f, Font, 1.f);
+	DrawText(TEXT("1 km   N 全圖"), FLinearColor(0.85f, 0.85f, 0.85f), X + 6.f, Y + H - 16.f, Font, 0.8f);
+}
+
 void AHKFreeRoamHUD::DrawReadout()
 {
 	APawn* Pawn = GetOwningPawn();
@@ -289,7 +448,7 @@ void AHKFreeRoamHUD::DrawHelp()
 		TEXT("車  W 油門  S 煞車／倒車  A D 轉向  Space 手煞  滑鼠環迴望（停手自動回正）  滾輪拉近／拉遠"),
 		TEXT("直升機  滑鼠週期變距  A D 偏航  E Q 總距  H 懸停"),
 		TEXT("方向鍵或 I J K L 係直升機後備操控"),
-		TEXT("M 地圖，撳地圖傳送    F9 切換畫質"),
+		TEXT("M 地圖，撳地圖傳送    N 小地圖：近距 1 km／全港    F9 切換畫質"),
 		TEXT("Ctrl+1 至 0 傳送到地區    控制台 HK.Go 名稱")};
 	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.62f), 16.f, 16.f, 760.f, 176.f);
 	for (int32 Line = 0; Line < UE_ARRAY_COUNT(Lines); ++Line)
