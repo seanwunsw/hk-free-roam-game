@@ -47,6 +47,7 @@ void UHKGameInstance::Init()
 	LoadWarp();
 	LoadPlaces();
 	LoadMinimap();
+	LoadLabels();
 }
 
 bool UHKGameInstance::IsWarpReady() const
@@ -255,4 +256,16 @@ void UHKGameInstance::LoadMinimap()
 	Texture->UpdateResource();
 	Minimap = Texture;
 	UE_LOG(LogHK, Display, TEXT("Minimap %dx%d from %s"), Width, Height, *ImagePath);
+}
+
+void UHKGameInstance::LoadLabels()
+{
+	Labels = FHKMapLabels();
+	FString FileName = TEXT("road_names.json");
+	TSharedPtr<FJsonObject> Manifest;
+	if (HKReadJsonObject(FPaths::Combine(ProcessedDir(), TEXT("manifest.json")), Manifest))
+	{
+		Manifest->TryGetStringField(TEXT("road_names_file"), FileName);
+	}
+	Labels.Load(FPaths::Combine(ProcessedDir(), FileName));
 }

@@ -41,6 +41,7 @@ from tools.pipeline.geometry import (
 from tools.pipeline.glbutil import write_glb
 from tools.pipeline import streetscape
 from tools.pipeline import coast as coastmask
+from tools.pipeline import labels
 from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
 from tools.pipeline import spawns as spawn_rules
@@ -270,6 +271,8 @@ def extract_osm(path: Path, log: Log) -> dict:
     walks = []
     waters_ll = []
     coasts = []
+    place_nodes = []
+    districts_ll = []
     seen = 0
     processor = osmium.FileProcessor(str(path)).with_locations().with_areas()
     for obj in processor:
@@ -304,6 +307,16 @@ def extract_osm(path: Path, log: Log) -> dict:
                     )
                     buildings_ll.append(outer)
                     building_meta.append((kind, height, elevated))
+                elif (
+                    tags.get("boundary") == "administrative"
+                    and tags.get("admin_level") == "6"
+                    and str(tags.get("name:zh") or tags.get("name") or "").split(" ")[0].endswith("區")
+                ):
+                    # The 18 Hong Kong districts (Shenzhen's admin_level 6 use simplified 区).
+                    zh, en = labels.split_names(tags)
+                    rings = [r for r in (_ring_nodes(ring) for ring in obj.outer_rings()) if r is not None]
+                    if rings:
+                        districts_ll.append({"zh": zh, "en": en, "rings": rings})
                 elif (
                     tags.get("natural") == "water"
                     or tags.get("landuse") in {"reservoir", "basin"}
@@ -347,8 +360,11 @@ def extract_osm(path: Path, log: Log) -> dict:
                     covered = tags.get("tunnel") == "building_passage" or tags.get("covered") in {"yes", "arcade"}
                     tunnel = (_truthy(tags.get("tunnel")) or layer < 0) and not covered
                     bridge = _truthy(tags.get("bridge")) or layer > 0
+                    name_zh, name_en = labels.split_names(tags)
                     roads.append(
                         {
+                            "name_zh": name_zh,
+                            "name_en": name_en,
                             "ll": line,
                             "highway": highway,
                             "lanes": lanes,
@@ -366,12 +382,19 @@ def extract_osm(path: Path, log: Log) -> dict:
                     if len(line) > 1600:
                         line = line[:: max(1, len(line) // 1200)]
                     coasts.append(line)
+            elif obj.is_node():
+                tags = obj.tags
+                if len(tags) and tags.get("place") in labels.PLACE_KINDS and obj.location.valid():
+                    zh, en = labels.split_names(tags)
+                    if zh or en:
+                        place_nodes.append({"zh": zh, "en": en, "kind": tags.get("place"), "lon": obj.location.lon, "lat": obj.location.lat})
         except Exception:
             continue
     log(
         f"osm done records {seen}  buildings {len(buildings_ll)}  roads {len(roads)}  "
         f"water {len(waters_ll)}  coast {len(coasts)}  walkways {len(walks)}  "
-        f"one-way roads {sum(1 for r in roads if r['oneway'])}"
+        f"one-way roads {sum(1 for r in roads if r['oneway'])}  named roads {sum(1 for r in roads if r['name_zh'] or r['name_en'])}  "
+        f"place nodes {len(place_nodes)}  districts {len(districts_ll)}"
     )
     return {
         "buildings_ll": buildings_ll,
@@ -380,6 +403,8 @@ def extract_osm(path: Path, log: Log) -> dict:
         "walks": walks,
         "waters_ll": waters_ll,
         "coasts": coasts,
+        "place_nodes": place_nodes,
+        "districts_ll": districts_ll,
     }
 
 
@@ -772,12 +797,13 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
             wet = terrain_z < LAND_MIN_M
             wet_samples += int(wet.sum())
             terrain_z = np.where(wet, LAND_MIN_M, terrain_z)
-        prepared.append(
-            roadnet.make_road(
-                xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal, keys,
-                perp=perp, oneway=bool(road.get("oneway")),
-            )
+        made = roadnet.make_road(
+            xy, terrain_z, road["highway"], road["lanes"], mode, road.get("layer", 0), horizontal, keys,
+            perp=perp, oneway=bool(road.get("oneway")),
         )
+        made["name_zh"] = road.get("name_zh", "")
+        made["name_en"] = road.get("name_en", "")
+        prepared.append(made)
     tunnels = sum(1 for road in prepared if road["mode"] == "tunnel")
     bridges = sum(1 for road in prepared if road["mode"] == "bridge")
     log(f"roads kept {len(prepared)}  bridges {bridges}  open-cut tunnels {tunnels}  ground samples lifted to shore {wet_samples}")
@@ -1861,6 +1887,12 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     }
     log(f"spawn lanes {json.dumps(road_stats['spawn_lanes'])}")
     minimap = _draw_minimap(out / "minimap.png", height, landscape, roads, landmarks["places"], is_land, waters)
+    names_doc = labels.build(
+        roads,
+        labels.place_points(warp, extracted.get("place_nodes", []), bounds),
+        labels.district_areas(warp, extracted.get("districts_ll", [])),
+    )
+    log(f"road names {json.dumps(labels.stats(names_doc))}")
     mask = write_land_mask(out, config, land, extract, grids, log)
     dem = load_dem()
     harbour_rows = measure_harbour(warp, dem, is_land=mask.is_land) if dem is not None else []
@@ -1890,6 +1922,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         "coast": coast_stats,
         "road_heights": road_stats,
         "building_road_overlap": overlap,
+        "road_names": names_doc,
         "notes": notes,
         "counts": {
             "osm_buildings": len(extracted["buildings_ll"]),
@@ -1910,6 +1943,8 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
     # Final ground centrelines near the spawns, for check_roads' spawn lane metric.
     (out / "spawn_roads.json").write_text(json.dumps(built.get("spawn_roads") or []), encoding="utf-8")
     (out / "landmarks.json").write_text(json.dumps(built["landmarks"], ensure_ascii=False, indent=2), encoding="utf-8")
+    if built.get("road_names") is not None:
+        (out / "road_names.json").write_text(json.dumps(built["road_names"], ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     landscape = built["landscape"]
     harbour = built.get("harbour") or []
     widths = [row["game_width_m"] for row in harbour]
@@ -1954,6 +1989,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "tiles": built["tiles"],
         "spawns_file": "spawns.json",
         "landmarks_file": "landmarks.json",
+        "road_names_file": "road_names.json",
         "warp_lut": "warp_lut.bin",
     }
     (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -1965,6 +2001,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "coast": built.get("coast"),
         "road_heights": built.get("road_heights"),
         "building_road_overlap": built.get("building_road_overlap"),
+        "road_names": labels.stats(built["road_names"]) if built.get("road_names") else None,
         "harbour_game_width_m": {
             "sections": len(widths),
             "min": min_harbour,

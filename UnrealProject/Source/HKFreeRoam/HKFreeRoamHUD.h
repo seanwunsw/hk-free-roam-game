@@ -23,6 +23,8 @@ private:
 	void DrawHelp();
 	void DrawReadout();
 	void UpdateStreaming();
+	void UpdateLabels();
+	void DrawStreetName();
 
 	float SmoothedFps = 60.f;
 	float StreamTimer = 0.f;
@@ -30,4 +32,9 @@ private:
 	bool bStreamingComplete = true;
 	int32 CountTick = 0;
 	bool bHasWorldPartition = false;
+
+	float LabelTimer = 0.f;
+	FString StreetZh;
+	FString StreetEn;
+	FString AreaText;
 };

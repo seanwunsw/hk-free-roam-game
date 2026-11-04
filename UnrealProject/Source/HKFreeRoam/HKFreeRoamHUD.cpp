@@ -24,6 +24,7 @@ void AHKFreeRoamHUD::DrawHUD()
 	}
 	SmoothedFps = FMath::Lerp(SmoothedFps, 1.f / FMath::Max(GetWorld()->GetDeltaSeconds(), 0.0001f), 0.05f);
 	UpdateStreaming();
+	UpdateLabels();
 
 	AHKPlayerController* Controller = Cast<AHKPlayerController>(GetOwningPlayerController());
 	bFullMapVisible = Controller && Controller->IsMapOpen();
@@ -52,6 +53,7 @@ void AHKFreeRoamHUD::DrawHUD()
 		DrawMap(FullMapX, FullMapY, FullMapW, FullMapH, true);
 	}
 
+	DrawStreetName();
 	DrawReadout();
 	if (Controller && Controller->IsHelpVisible())
 	{
@@ -88,6 +90,87 @@ void AHKFreeRoamHUD::UpdateStreaming()
 		{
 			++LoadedSpatialActors;
 		}
+	}
+}
+
+void AHKFreeRoamHUD::UpdateLabels()
+{
+	LabelTimer -= GetWorld()->GetDeltaSeconds();
+	if (LabelTimer > 0.f)
+	{
+		return;
+	}
+	LabelTimer = 0.2f;
+	StreetZh.Reset();
+	StreetEn.Reset();
+	AreaText.Reset();
+	UHKGameInstance* Game = GetWorld()->GetGameInstance<UHKGameInstance>();
+	APawn* Pawn = GetOwningPawn();
+	if (!Game || !Pawn)
+	{
+		return;
+	}
+	const FHKMapLabels& Labels = Game->GetLabels();
+	const FVector2D Here = HKAxes::UnrealToGame(Pawn->GetActorLocation());
+	// Driving: prefer the road along the car's heading over the cross street at a junction.
+	FVector2D Heading;
+	const FVector2D* HeadingPtr = nullptr;
+	if (Cast<AHKCar>(Pawn))
+	{
+		const FVector Velocity = Pawn->GetVelocity();
+		const FVector Forward = Velocity.Size2D() > 200.0 ? Velocity : Pawn->GetActorForwardVector();
+		Heading = FVector2D(Forward.X, -Forward.Y).GetSafeNormal();
+		if (!Heading.IsNearlyZero())
+		{
+			HeadingPtr = &Heading;
+		}
+	}
+	FHKRoadHit Hit;
+	if (Labels.FindRoad(Here.X, Here.Y, 30.0, HeadingPtr, Hit))
+	{
+		StreetZh = Labels.NameZh(Hit.Road);
+		StreetEn = Labels.NameEn(Hit.Road);
+		if (StreetZh.IsEmpty())
+		{
+			StreetZh = StreetEn;
+			StreetEn.Reset();
+		}
+	}
+	const FHKLabelPoint* District = Labels.FindDistrict(Here.X, Here.Y);
+	const FHKLabelPoint* Place = Labels.NearestPlace(Here.X, Here.Y, 1500.0);
+	if (District)
+	{
+		AreaText = District->Zh.IsEmpty() ? District->En : District->Zh;
+	}
+	if (Place)
+	{
+		const FString& PlaceName = Place->Zh.IsEmpty() ? Place->En : Place->Zh;
+		AreaText = AreaText.IsEmpty() ? PlaceName : FString::Printf(TEXT("%s · %s"), *AreaText, *PlaceName);
+	}
+}
+
+void AHKFreeRoamHUD::DrawStreetName()
+{
+	if (StreetZh.IsEmpty())
+	{
+		return;
+	}
+	UFont* Font = GEngine->GetSmallFont();
+	float ZhW = 0.f, ZhH = 0.f, EnW = 0.f, EnH = 0.f;
+	GetTextSize(StreetZh, ZhW, ZhH, Font, 1.8f);
+	if (!StreetEn.IsEmpty())
+	{
+		GetTextSize(StreetEn, EnW, EnH, Font, 1.0f);
+	}
+	const float BoxW = FMath::Max(ZhW, EnW) + 32.f;
+	const float BoxH = ZhH + EnH + 14.f;
+	const float BoxX = (Canvas->SizeX - BoxW) * 0.5f;
+	const float BoxY = Canvas->SizeY - 92.f - BoxH - 12.f;
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.5f), BoxX, BoxY, BoxW, BoxH);
+	DrawText(StreetZh, FLinearColor(1.f, 0.97f, 0.85f), (Canvas->SizeX - ZhW) * 0.5f, BoxY + 5.f, Font, 1.8f);
+	if (!StreetEn.IsEmpty())
+	{
+		DrawText(StreetEn, FLinearColor(0.8f, 0.82f, 0.85f), (Canvas->SizeX - EnW) * 0.5f, BoxY + 7.f + ZhH, Font, 1.0f);
 	}
 }
 
@@ -152,7 +235,11 @@ void AHKFreeRoamHUD::DrawReadout()
 		const FVector2D Game2D = HKAxes::UnrealToGame(Pawn->GetActorLocation());
 		const double Xm = Game2D.X;
 		const double Ym = Game2D.Y;
-		if (const FHKPlace* Place = Game->FindNearestPlace(Xm, Ym))
+		if (!AreaText.IsEmpty())
+		{
+			PlaceName = AreaText;
+		}
+		else if (const FHKPlace* Place = Game->FindNearestPlace(Xm, Ym))
 		{
 			PlaceName = Place->NameZh.IsEmpty() ? Place->Id : Place->NameZh;
 		}

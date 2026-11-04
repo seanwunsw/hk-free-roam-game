@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
+#include "HKMapLabels.h"
 #include "HKTypes.h"
 #include "HKGameInstance.generated.h"
 
@@ -32,6 +33,8 @@ public:
 	int32 GetMinimapWidth() const { return MinimapWidth; }
 	int32 GetMinimapHeight() const { return MinimapHeight; }
 
+	const FHKMapLabels& GetLabels() const { return Labels; }
+
 	static FString ProcessedDir();
 
 private:
@@ -39,6 +42,9 @@ private:
 	void LoadWarp();
 	void LoadPlaces();
 	void LoadMinimap();
+	void LoadLabels();
+
+	FHKMapLabels Labels;
 
 	FHKWarpState* WarpState = nullptr;
 
