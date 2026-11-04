@@ -88,6 +88,7 @@
   "min_harbour_width_m": 1000,
   "target_long_axis_min_m": 15000,
   "target_long_axis_max_m": 25000,
+  "max_building_road_overlaps": 43,
   "places": [
     {"id": "Central", "name_zh": "中環", "kind": "district", "lon": 114.1583, "lat": 22.2849, "hotkey": "One", "cars": 3},
     {"id": "WanChai", "name_zh": "灣仔", "kind": "district", "lon": 114.1733, "lat": 22.2775, "hotkey": "Two", "cars": 1},

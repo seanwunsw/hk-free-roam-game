@@ -295,8 +295,15 @@ def extract_osm(path: Path, log: Log) -> dict:
                         height = parse_metres(tags.get("est_height"))
                     if height is None:
                         height = parse_levels(tags.get("building:levels"))
+                    min_level = parse_levels(tags.get("building:min_level"))
+                    elevated = (
+                        kind == "roof"
+                        or parse_metres(tags.get("min_height")) is not None
+                        or (min_level is not None and min_level > 0.0)
+                        or (_truthy(tags.get("bridge")) and _layer_value(tags) > 0)
+                    )
                     buildings_ll.append(outer)
-                    building_meta.append((kind, height))
+                    building_meta.append((kind, height, elevated))
                 elif (
                     tags.get("natural") == "water"
                     or tags.get("landuse") in {"reservoir", "basin"}
@@ -456,6 +463,7 @@ def prepare_buildings(warp, extracted, bounds, log: Log) -> list[dict]:
     rings = _batch_project(warp, extracted["buildings_ll"])
     pending = []
     for ring, meta in zip(rings, extracted["building_meta"]):
+        meta = tuple(meta) + (False,) * (3 - len(meta))
         if len(ring) < 3:
             continue
         min_xy = ring.min(axis=0)
@@ -477,7 +485,7 @@ def prepare_buildings(warp, extracted, bounds, log: Log) -> list[dict]:
         horizontal_all = np.zeros(0)
     kept = []
     dropped_area = 0
-    for (ring, (kind, tagged_height), area, cx, cy), horizontal in zip(pending, horizontal_all):
+    for (ring, (kind, tagged_height, elevated), area, cx, cy), horizontal in zip(pending, horizontal_all):
         horizontal = float(horizontal)
         real_area = area / max(horizontal * horizontal, 1e-4)
         if real_area < 12.0:
@@ -499,6 +507,7 @@ def prepare_buildings(warp, extracted, bounds, log: Log) -> list[dict]:
             {
                 "ring": ring,
                 "kind": kind,
+                "elevated": bool(elevated),
                 "height": game_h,
                 "horizontal": horizontal,
                 "area": abs(signed_area(ring)),
@@ -546,6 +555,7 @@ def _merge_small(buildings: list[dict], log: Log) -> list[dict]:
             {
                 "ring": ring,
                 "kind": tallest["kind"],
+                "elevated": bool(tallest.get("elevated")),
                 "height": tallest["height"],
                 "horizontal": tallest["horizontal"],
                 "area": abs(signed_area(ring)),
@@ -827,8 +837,8 @@ def cut_buildings(buildings: list[dict], buffers, tree, log: Log) -> list[dict]:
         if ring is None or abs(signed_area(ring)) < 3.0:
             removed += 1
             continue
-        ring = _simplify_ring(ring, 0.8, 14)
-        if len(ring) < 3:
+        ring = _cut_ring(ring, cutter)
+        if ring is None:
             removed += 1
             continue
         building = dict(building)
@@ -840,6 +850,125 @@ def cut_buildings(buildings: list[dict], buffers, tree, log: Log) -> list[dict]:
         cut += 1
     log(f"cut {cut} footprints  removed {removed}  remaining {len(kept)}")
     return kept
+
+
+CUT_PAD_M = 1.5
+
+
+def _cut_ring(ring: np.ndarray, cutter) -> np.ndarray | None:
+    """Simplify a cut footprint without letting it grow back over the road.
+
+    _simplify_ring's last resort keeps every k-th vertex, which chords straight across
+    the notch the road was cut out of. Douglas-Peucker below the cut pad can only move
+    the outline by less than CUT_PAD_M; the final difference makes it exact again."""
+    import shapely
+
+    out = None
+    for tolerance in (0.3, 0.6, 1.0):
+        out = ensure_ccw(clean_ring(douglas_peucker(np.vstack([ring, ring[:1]]), tolerance)[:-1], 0.15))
+        if len(out) <= 16:
+            break
+    if out is None or len(out) < 3:
+        return None
+    again = largest_ring(shapely.difference(shapely.make_valid(shapely.polygons(out)), cutter))
+    if again is None or abs(signed_area(again)) < 3.0:
+        return None
+    return ensure_ccw(clean_ring(again, 0.15))
+
+
+BRIDGE_DECK_M = 1.0
+BRIDGE_HEADROOM_M = 0.3
+
+
+def _bridge_segments(roads: list[dict], pad: float):
+    """One quad per bridge centreline segment with the lower deck top of its two ends."""
+    import shapely
+
+    quads, decks = [], []
+    for road in roads:
+        if road["mode"] != "bridge" or "center" not in road or len(road["xy"]) < 2:
+            continue
+        xy = road["xy"]
+        nrm = roadnet.left_normals(xy)
+        left = xy + nrm * (road["hl"] + pad)[:, None]
+        right = xy - nrm * (road["hr"] + pad)[:, None]
+        z = road["center"][:, 2]
+        for i in range(len(xy) - 1):
+            quads.append(shapely.make_valid(shapely.polygons(np.array([left[i], left[i + 1], right[i + 1], right[i]]))))
+            decks.append(float(min(z[i], z[i + 1])))
+    return quads, np.asarray(decks)
+
+
+def clip_under_bridges(buildings: list[dict], roads: list[dict], log: Log) -> list[dict]:
+    """cut_buildings skips bridges so real buildings can stand under flyovers. A building
+    whose top reaches the deck underside would poke through it, and a tagged elevated
+    structure (building=roof canopy, noise enclosure, min_height) is extruded from the
+    ground as a solid block: cut both out of the bridge footprint."""
+    import shapely
+
+    quads, decks = _bridge_segments(roads, CUT_PAD_M)
+    if not quads or not buildings:
+        return buildings
+    tree = shapely.STRtree(quads)
+    kept, cut, dropped = [], 0, 0
+    for building in buildings:
+        poly = shapely.make_valid(shapely.polygons(np.asarray(building["ring"], dtype=np.float64)))
+        hits = tree.query(poly, predicate="intersects")
+        if len(hits) == 0:
+            kept.append(building)
+            continue
+        top = float(building["z"] + building["height"])
+        bad = [quads[i] for i in hits if building.get("elevated") or top > decks[i] - BRIDGE_DECK_M - BRIDGE_HEADROOM_M]
+        if not bad:
+            kept.append(building)
+            continue
+        ring = largest_ring(shapely.difference(poly, shapely.union_all(bad)))
+        if ring is None or abs(signed_area(ring)) < 3.0:
+            dropped += 1
+            continue
+        ring = _cut_ring(ensure_ccw(clean_ring(ring, 0.15)), shapely.union_all(bad))
+        if ring is None:
+            dropped += 1
+            continue
+        building = dict(building)
+        building["ring"] = ring
+        building["area"] = abs(signed_area(ring))
+        building["cx"] = float(ring[:, 0].mean())
+        building["cy"] = float(ring[:, 1].mean())
+        kept.append(building)
+        cut += 1
+    log(f"bridge clearance: cut {cut} footprints  removed {dropped}  remaining {len(kept)}")
+    return kept
+
+
+def building_road_overlap(buildings: list[dict], roads: list[dict], min_m2: float = 1.0) -> dict:
+    """Bake-report check: drivable ribbon area (no pad) covered by a building whose
+    vertical span contains the road surface. Ground and tunnel ribbons count wherever
+    they meet a footprint; bridge decks only where the deck is inside the building."""
+    import shapely
+
+    polys = [shapely.make_valid(shapely.polygons(np.asarray(b["ring"], dtype=np.float64))) for b in buildings]
+    ground = [shapely.make_valid(shapely.polygons(r)) for r in streetscape.ribbon_outlines(roads, 0.0, ("ground", "tunnel"))]
+    quads, decks = _bridge_segments(roads, 0.0)
+    out = {}
+    for name, cutters, zs in (("ground", ground, None), ("bridge", quads, decks)):
+        if not cutters or not polys:
+            out[name] = {"buildings": 0, "area_m2": 0.0, "max_m2": 0.0}
+            continue
+        tree = shapely.STRtree(cutters)
+        hit_b, hit_c = tree.query(polys, predicate="intersects")
+        groups: dict[int, list[int]] = defaultdict(list)
+        for b, c in zip(hit_b, hit_c):
+            if zs is not None:
+                building = buildings[int(b)]
+                if not (building["z"] - 0.5 <= zs[int(c)] <= building["z"] + building["height"]):
+                    continue
+            groups[int(b)].append(int(c))
+        areas = [float(shapely.intersection(polys[b], shapely.union_all([cutters[c] for c in cs])).area) for b, cs in groups.items()]
+        areas = [a for a in areas if a >= min_m2]
+        out[name] = {"buildings": len(areas), "area_m2": round(float(sum(areas)), 1), "max_m2": round(float(max(areas, default=0.0)), 1)}
+    out["buildings"] = out["ground"]["buildings"] + out["bridge"]["buildings"]
+    return out
 
 
 def repair_rings(buildings: list[dict], log: Log) -> list[dict]:
@@ -1490,6 +1619,9 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     buildings = cut_buildings(buildings, buffers, tree, log)
     buildings = repair_rings(buildings, log)
     buildings = assign_building_z(buildings, surface_at, log)
+    buildings = clip_under_bridges(buildings, roads, log)
+    overlap = building_road_overlap(buildings, roads)
+    log(f"building-road overlap {json.dumps(overlap)}")
     waters = prepare_water(warp, extracted, height, landscape, log)
     del buffers, tree
     walk_block = streetscape.Blockers(
@@ -1553,6 +1685,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         "harbour": harbour_rows,
         "coast": coast_stats,
         "road_heights": road_stats,
+        "building_road_overlap": overlap,
         "notes": notes,
         "counts": {
             "osm_buildings": len(extracted["buildings_ll"]),
@@ -1627,6 +1760,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "long_axis_m": long_axis,
         "coast": built.get("coast"),
         "road_heights": built.get("road_heights"),
+        "building_road_overlap": built.get("building_road_overlap"),
         "harbour_game_width_m": {
             "sections": len(widths),
             "min": min_harbour,
@@ -1668,13 +1802,16 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         and coast.get("land_above_0_pct", 0.0) >= 99.0
         and not coast.get("spawns_over_sea")
     )
-    report["ok"] = bool(axis_ok and harbour_ok and native_ok and content_ok and coast_ok)
+    overlap = built.get("building_road_overlap") or {}
+    overlap_ok = int(overlap.get("buildings", 0)) <= int(config.get("max_building_road_overlaps", 0))
+    report["ok"] = bool(axis_ok and harbour_ok and native_ok and content_ok and coast_ok and overlap_ok)
     report["checks"] = {
         "long_axis": axis_ok,
         "harbour": harbour_ok,
         "native_warp": native_ok,
         "content": content_ok,
         "coast": coast_ok,
+        "building_road_overlap": overlap_ok,
     }
     (out / "logs" / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     log(
