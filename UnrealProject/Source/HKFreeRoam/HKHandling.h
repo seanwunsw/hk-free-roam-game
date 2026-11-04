@@ -1,7 +1,8 @@
 #pragma once
 
 // Driving classes from data/config/vehicles.json (single source of truth, also read by
-// tools/drive_model). HK.ReloadHandling reloads the file and reapplies it to every car.
+// tools/drive_model). HK.ReloadHandling reloads the file and reapplies it to every car;
+// HK.ReloadHandling <file> also merges a sweep overlay (data/config/sweeps/) over it.
 
 #include "CoreMinimal.h"
 #include "hk_drive_assist.h"
@@ -139,7 +140,10 @@ namespace HKHandling
 	const FHKHandling& Get(EHKCarClass Class);
 	EHKCarClass ClassForCar(FName CarId);
 	const FHKCarLotConfig& Lot();
-	bool Reload();
+	// File: optional JSON merged over vehicles.json, relative to data/config/. Empty clears it.
+	// false (nothing changed) when the overlay does not load.
+	bool Reload(const FString& File = FString());
+	FString OverlayFile();
 	FString ConfigPath();
 
 	const TCHAR* ClassName(EHKCarClass Class);

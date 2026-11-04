@@ -213,3 +213,22 @@ def test_model_reproduces_ue_runs(run, name):
     metrics = Run(spec).all()
     for key, ue in UE_RUNS[run][name].items():
         assert abs(metrics[key] - ue) <= UE_TOLERANCE[key] * ue, (key, metrics[key], ue)
+
+
+SWEEPS = ROOT / "data" / "config" / "sweeps"
+
+
+def _missing_keys(over, base, path=""):
+    for key, value in over.items():
+        if key.startswith("_"):
+            continue
+        if key not in base:
+            yield path + key
+        elif isinstance(value, dict):
+            yield from _missing_keys(value, base[key], path + key + ".")
+
+
+@pytest.mark.parametrize("sweep", sorted(SWEEPS.glob("*.json")), ids=lambda p: p.name)
+def test_sweep_overlays_only_override_existing_keys(sweep):
+    # HK.ReloadHandling <overlay> merges these over vehicles.json; a typo would silently do nothing.
+    assert list(_missing_keys(json.loads(sweep.read_text(encoding="utf-8")), config.load())) == []

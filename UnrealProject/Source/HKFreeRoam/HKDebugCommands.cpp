@@ -172,9 +172,10 @@ static void HKSpawnCar(const TArray<FString>& Args, UWorld* World)
 
 static void HKReloadHandling(const TArray<FString>& Args, UWorld* World)
 {
-	if (!HKHandling::Reload())
+	const FString Overlay = Args.Num() > 0 ? Args[0] : FString();
+	if (!HKHandling::Reload(Overlay))
 	{
-		UE_LOG(LogHK, Warning, TEXT("HK.ReloadHandling: %s did not load, kept the old values"), *HKHandling::ConfigPath());
+		UE_LOG(LogHK, Warning, TEXT("HK.ReloadHandling: overlay %s did not load, kept the old values"), *Overlay);
 		return;
 	}
 	int32 Count = 0;
@@ -183,7 +184,8 @@ static void HKReloadHandling(const TArray<FString>& Args, UWorld* World)
 		It->ApplyHandling();
 		++Count;
 	}
-	UE_LOG(LogHK, Display, TEXT("HK.ReloadHandling: reapplied to %d cars"), Count);
+	UE_LOG(LogHK, Display, TEXT("HK.ReloadHandling: reapplied to %d cars (overlay: %s)"), Count,
+		HKHandling::OverlayFile().IsEmpty() ? TEXT("none") : *HKHandling::OverlayFile());
 }
 
 static void HKDriveTest(const TArray<FString>& Args, UWorld* World)
@@ -230,7 +232,7 @@ static FAutoConsoleCommandWithWorldAndArgs CmdSpawnCar(
 
 static FAutoConsoleCommandWithWorldAndArgs CmdReloadHandling(
 	TEXT("HK.ReloadHandling"),
-	TEXT("Reload data/config/vehicles.json and reapply it to every car."),
+	TEXT("Reload data/config/vehicles.json and reapply it to every car. Optional overlay merged on top, relative to data/config: HK.ReloadHandling sweeps/awd_f180.json"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HKReloadHandling));
 
 static FAutoConsoleCommandWithWorldAndArgs CmdDriveTest(

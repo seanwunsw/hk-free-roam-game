@@ -28,6 +28,24 @@ namespace
 		return Instance;
 	}
 
+	// Optional sweep overlay merged over vehicles.json (HK.ReloadHandling <file>); empty: none.
+	FString& OverlayPath()
+	{
+		static FString Path;
+		return Path;
+	}
+
+	TSharedPtr<FJsonObject> ReadJson(const FString& Path)
+	{
+		FString Text;
+		TSharedPtr<FJsonObject> Root;
+		if (!FFileHelper::LoadFileToString(Text, *Path) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Root))
+		{
+			return nullptr;
+		}
+		return Root;
+	}
+
 	TSharedPtr<FJsonObject> Merge(const TSharedPtr<FJsonObject>& Base, const TSharedPtr<FJsonObject>& Over)
 	{
 		TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
@@ -227,13 +245,25 @@ namespace
 		{
 			D.Classes[Index].Class = static_cast<EHKCarClass>(Index);
 		}
-		FString Text;
 		const FString Path = HKHandling::ConfigPath();
-		TSharedPtr<FJsonObject> Root;
-		if (!FFileHelper::LoadFileToString(Text, *Path) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Root) || !Root.IsValid())
+		TSharedPtr<FJsonObject> Root = ReadJson(Path);
+		if (!Root.IsValid())
 		{
 			UE_LOG(LogHK, Warning, TEXT("Handling config %s missing or invalid; every car uses built-in defaults"), *Path);
 			return;
+		}
+		if (!OverlayPath().IsEmpty())
+		{
+			const TSharedPtr<FJsonObject> Overlay = ReadJson(OverlayPath());
+			if (Overlay.IsValid())
+			{
+				Root = Merge(Root, Overlay);
+				UE_LOG(LogHK, Display, TEXT("Handling overlay %s merged over %s"), *OverlayPath(), *Path);
+			}
+			else
+			{
+				UE_LOG(LogHK, Warning, TEXT("Handling overlay %s missing or invalid; ignored"), *OverlayPath());
+			}
 		}
 		const TSharedPtr<FJsonObject> Defaults = Section(Root, TEXT("Defaults"));
 		const TSharedPtr<FJsonObject> Classes = Section(Root, TEXT("classes"));
@@ -329,11 +359,26 @@ const FHKCarLotConfig& HKHandling::Lot()
 	return Loaded().Lot;
 }
 
-bool HKHandling::Reload()
+bool HKHandling::Reload(const FString& File)
 {
+	FString Overlay;
+	if (!File.IsEmpty())
+	{
+		Overlay = FPaths::IsRelative(File) ? FPaths::Combine(FPaths::GetPath(ConfigPath()), File) : File;
+		if (!ReadJson(Overlay).IsValid())
+		{
+			return false;
+		}
+	}
+	OverlayPath() = Overlay;
 	Data().bLoaded = false;
 	Loaded();
 	return true;
+}
+
+FString HKHandling::OverlayFile()
+{
+	return OverlayPath();
 }
 
 const TCHAR* HKHandling::ClassName(EHKCarClass Class)

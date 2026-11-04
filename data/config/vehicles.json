@@ -520,14 +520,14 @@
         "DampingRatio": 0.48,
         "MaxRaiseCm": 14,
         "MaxDropCm": 15,
-        "FrictionFront": 1.8,
-        "FrictionRear": 1.85,
-        "BrakeTorqueFront": 2200,
-        "BrakeTorqueRear": 1300,
+        "FrictionFront": 1.6,
+        "FrictionRear": 1.65,
+        "BrakeTorqueFront": 2500,
+        "BrakeTorqueRear": 1450,
         "HandbrakeTorque": 3600,
         "bTractionControlFront": true,
         "bTractionControlRear": true,
-        "RollbarScaling": 0.45
+        "RollbarScaling": 0.2
       },
       "Assist": {
         "TopSpeedKmh": 245,
