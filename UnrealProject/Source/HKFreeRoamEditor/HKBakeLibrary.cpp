@@ -170,19 +170,26 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	Custom->OutputType = CMOT_Float3;
 	Custom->Description = AssetName;
 	Custom->Code = Code;
-	// The constructor adds one unnamed input. Clear it so the inputs are UV, VertColor, then the optional WorldPos and UV1.
+	// The constructor adds one unnamed input. Clear it so the inputs are UV, VertColor, VertAlpha,
+	// then the optional WorldPos and UV1.
 	Custom->Inputs.Reset();
 	FCustomInput& UV = Custom->Inputs.AddDefaulted_GetRef();
 	UV.InputName = TEXT("UV");
 	FCustomInput& Color = Custom->Inputs.AddDefaulted_GetRef();
 	Color.InputName = TEXT("VertColor");
+	FCustomInput& Alpha = Custom->Inputs.AddDefaulted_GetRef();
+	Alpha.InputName = TEXT("VertAlpha");
 	UMaterialExpressionTextureCoordinate* TexCoord = NewObject<UMaterialExpressionTextureCoordinate>(Material);
 	UMaterialExpressionVertexColor* VertColor = NewObject<UMaterialExpressionVertexColor>(Material);
 	AddExpression(Material, Custom);
 	AddExpression(Material, TexCoord);
 	AddExpression(Material, VertColor);
 	Custom->Inputs[0].Input.Connect(0, TexCoord);
+	// UMaterialExpressionVertexColor outputs are RGB (float3, mask RGB), R, G, B, A. Output 0 has
+	// no alpha: M_Facade read VertColor.a and failed on PCD3D_SM6 ("vector swizzle 'a' is out of
+	// bounds"), so every building drew with the default WorldGridMaterial. Alpha is output 4.
 	Custom->Inputs[1].Input.Connect(0, VertColor);
+	Custom->Inputs[2].Input.Connect(4, VertColor);
 	if (bWorldPos)
 	{
 		FCustomInput& WorldIn = Custom->Inputs.AddDefaulted_GetRef();
@@ -944,7 +951,7 @@ bool UHKBakeLibrary::BakeWorld()
 
 	UMaterial* Facade = MakeCustomMaterial(
 		TEXT("M_Facade"),
-		TEXT("float roof = step(0.5, VertColor.a);\n")
+		TEXT("float roof = step(0.5, VertAlpha);\n")
 			TEXT("float wx = frac(UV.x * 0.42);\n")
 			TEXT("float wy = frac(UV.y * 0.50);\n")
 			TEXT("float window = step(0.18, wx) * step(wx, 0.82) * step(0.18, wy) * step(wy, 0.78);\n")
