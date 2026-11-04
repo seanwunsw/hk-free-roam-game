@@ -38,6 +38,31 @@ namespace
 	// Top of the chassis box baked by HKBakeLibrary (Z 20..90 cm).
 	constexpr float BodyTopCm = 90.f;
 	constexpr float BodyBoxCentreZ = 55.f;
+
+	// Gives Body the baked car mesh and physics asset if it has none. Quiet when the world has not
+	// been baked yet (the asset does not exist); returns whether Body ends up with a mesh.
+	bool LoadBakedCarMesh(USkeletalMeshComponent* Body)
+	{
+		if (!Body)
+		{
+			return false;
+		}
+		if (Body->GetSkeletalMeshAsset())
+		{
+			return true;
+		}
+		USkeletalMesh* Skel = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/HK/Vehicles/SK_HKCar.SK_HKCar"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!Skel)
+		{
+			return false;
+		}
+		Body->SetSkeletalMeshAsset(Skel);
+		if (UPhysicsAsset* Physics = LoadObject<UPhysicsAsset>(nullptr, TEXT("/Game/HK/Vehicles/SK_HKCar.PA_HKCar"), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			Body->SetPhysicsAsset(Physics);
+		}
+		return true;
+	}
 }
 
 AHKCar::AHKCar()
@@ -52,6 +77,15 @@ AHKCar::AHKCar()
 	bUseControllerRotationRoll = false;
 
 	ConfigureMechanical();
+	if (UChaosWheeledVehicleMovementComponent* Move = Movement())
+	{
+		// Registering the Chaos movement component builds the vehicle and looks up the wheel bones
+		// on the mesh, so it must not register before the mesh has its skeletal mesh. A spawned car
+		// registers all components inside SpawnActorDeferred, before SpawnCar can set the mesh
+		// (Chaos then ensures on Mesh->GetSkinnedAsset()). RegisterVehicleMovement() registers it
+		// once the mesh is there: PostRegisterAllComponents (placed cars), SpawnCar, BeginPlay.
+		Move->bAutoRegister = false;
+	}
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetMesh());
@@ -304,6 +338,12 @@ UChaosWheeledVehicleMovementComponent* AHKCar::Movement() const
 	return Cast<UChaosWheeledVehicleMovementComponent>(GetVehicleMovementComponent());
 }
 
+UChaosWheeledVehicleMovementComponent* AHKCar::LiveMovement() const
+{
+	UChaosWheeledVehicleMovementComponent* Move = Movement();
+	return Move && Move->IsRegistered() ? Move : nullptr;
+}
+
 void AHKCar::SetupWheel(UStaticMeshComponent* Wheel, const FVector& Offset, UStaticMesh* WheelMesh)
 {
 	Wheel->SetupAttachment(GetMesh());
@@ -330,22 +370,9 @@ void AHKCar::BeginPlay()
 		Existing->UnPossess();
 		Existing->Destroy();
 	}
-	if (!GetMesh()->GetSkeletalMeshAsset())
-	{
-		if (USkeletalMesh* Skel = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/HK/Vehicles/SK_HKCar.SK_HKCar")))
-		{
-			UPhysicsAsset* Physics = LoadObject<UPhysicsAsset>(nullptr, TEXT("/Game/HK/Vehicles/SK_HKCar.PA_HKCar"));
-			SetVehicleMesh(Skel, Physics);
-		}
-		else
-		{
-			UE_LOG(LogHK, Warning, TEXT("Car %s has no skeletal mesh. Bake the world before driving."), *GetName());
-		}
-	}
-	else
-	{
-		PatchWheelBones();
-	}
+	LoadBakedCarMesh(GetMesh());
+	PatchWheelBones();
+	RegisterVehicleMovement(); // warns (once) when the world is not baked
 
 	EnableChassisPhysics();
 	ChaseCamera->Init(CameraBoom, FollowCamera);
@@ -436,6 +463,9 @@ AHKCar* AHKCar::SpawnCar(UWorld* World, EHKCarClass Class, const FTransform& Whe
 	{
 		return nullptr;
 	}
+	// The movement component is still unregistered here (bAutoRegister off): mesh first, then it.
+	LoadBakedCarMesh(Car->GetMesh());
+	Car->RegisterVehicleMovement();
 	Car->CarClass = Class;
 	Car->bClassOverride = true;
 	if (!Id.IsNone())
@@ -508,6 +538,34 @@ void AHKCar::PatchWheelBones()
 	}
 }
 
+void AHKCar::PostRegisterAllComponents()
+{
+	Super::PostRegisterAllComponents();
+	RegisterVehicleMovement();
+}
+
+void AHKCar::RegisterVehicleMovement()
+{
+	UChaosWheeledVehicleMovementComponent* Move = Movement();
+	if (!Move || Move->IsRegistered() || !GetWorld() || !GetMesh()->IsRegistered())
+	{
+		return;
+	}
+	if (!GetMesh()->GetSkeletalMeshAsset())
+	{
+		// Before BeginPlay this is the normal deferred-spawn order (SpawnCar sets the mesh next).
+		if (!bWarnedNoMesh && (HasActorBegunPlay() || IsActorBeginningPlay()))
+		{
+			bWarnedNoMesh = true;
+			UE_LOG(LogHK, Warning, TEXT("Car %s has no skeletal mesh, so its Chaos vehicle is not registered and it cannot drive. Bake the world before driving."), *GetName());
+		}
+		return;
+	}
+	// Wheel bones as the movement component will read them while it registers.
+	PatchWheelBones();
+	Move->RegisterComponent();
+}
+
 void AHKCar::SetVehicleMesh(USkeletalMesh* NewMesh, UPhysicsAsset* PhysicsAsset)
 {
 	if (!NewMesh)
@@ -520,6 +578,7 @@ void AHKCar::SetVehicleMesh(USkeletalMesh* NewMesh, UPhysicsAsset* PhysicsAsset)
 		GetMesh()->SetPhysicsAsset(PhysicsAsset);
 	}
 	PatchWheelBones();
+	RegisterVehicleMovement();
 }
 
 void AHKCar::ApplyPaint(UMaterialInterface* BodyMaterial, UMaterialInterface* WheelMaterial)
@@ -549,7 +608,7 @@ void AHKCar::PossessedBy(AController* NewController)
 	GetMesh()->SetEnableGravity(true);
 	// No tunnelling through thin road meshes at 250 km/h.
 	GetMesh()->SetUseCCD(true);
-	if (UChaosWheeledVehicleMovementComponent* Move = Movement())
+	if (UChaosWheeledVehicleMovementComponent* Move = LiveMovement())
 	{
 		Move->SetHandbrakeInput(false);
 		Move->SetBrakeInput(0.f);
@@ -597,7 +656,7 @@ void AHKCar::ResetMotion(const FVector& Location, float YawDeg)
 	SetActorLocationAndRotation(Location, FRotator(0.f, YawDeg, 0.f), false, nullptr, ETeleportType::ResetPhysics);
 	Body->SetPhysicsLinearVelocity(FVector::ZeroVector);
 	Body->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
-	if (UChaosWheeledVehicleMovementComponent* Move = Movement())
+	if (UChaosWheeledVehicleMovementComponent* Move = LiveMovement())
 	{
 		Move->ResetVehicle();
 	}
@@ -615,7 +674,7 @@ void AHKCar::AddCameraLook(float YawDeg, float PitchDeg)
 void AHKCar::Park()
 {
 	VisualSteerDegrees = 0.f;
-	if (UChaosWheeledVehicleMovementComponent* Move = Movement())
+	if (UChaosWheeledVehicleMovementComponent* Move = LiveMovement())
 	{
 		Move->SetThrottleInput(0.f);
 		Move->SetSteeringInput(0.f);
@@ -642,7 +701,7 @@ void AHKCar::StopPhysics()
 {
 	GetMesh()->SetPhysicsLinearVelocity(FVector::ZeroVector);
 	GetMesh()->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
-	if (UChaosWheeledVehicleMovementComponent* Move = Movement())
+	if (UChaosWheeledVehicleMovementComponent* Move = LiveMovement())
 	{
 		Move->SetThrottleInput(0.f);
 		Move->SetSteeringInput(0.f);
@@ -670,7 +729,7 @@ void AHKCar::Tick(float DeltaSeconds)
 
 void AHKCar::UpdateTelemetry(float DeltaSeconds)
 {
-	UChaosWheeledVehicleMovementComponent* Move = Movement();
+	UChaosWheeledVehicleMovementComponent* Move = LiveMovement();
 	UPrimitiveComponent* Body = GetMesh();
 	const FVector Fwd = GetActorForwardVector();
 	const FVector Right = GetActorRightVector();
@@ -736,7 +795,7 @@ void AHKCar::UpdateTelemetry(float DeltaSeconds)
 
 void AHKCar::DriveTick(float DeltaSeconds)
 {
-	UChaosWheeledVehicleMovementComponent* Move = Movement();
+	UChaosWheeledVehicleMovementComponent* Move = LiveMovement();
 	if (!Move || DeltaSeconds <= 0.f)
 	{
 		return;
@@ -847,7 +906,7 @@ void AHKCar::HoldIfGroundUnloaded()
 
 void AHKCar::UpdateWheelVisuals(float DeltaSeconds)
 {
-	UChaosWheeledVehicleMovementComponent* Move = Movement();
+	UChaosWheeledVehicleMovementComponent* Move = LiveMovement();
 	const float Speed = Move ? Move->GetForwardSpeed() : 0.f;
 	WheelSpinDegrees = FMath::UnwindDegrees(WheelSpinDegrees + FMath::RadiansToDegrees(Speed / WheelRadiusCm) * DeltaSeconds);
 	const FRotator Front(WheelSpinDegrees, VisualSteerDegrees, 90.f);

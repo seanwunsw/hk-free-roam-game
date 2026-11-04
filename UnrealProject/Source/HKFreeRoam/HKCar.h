@@ -52,10 +52,15 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void UnPossessed() override;
+	virtual void PostRegisterAllComponents() override;
 
 	void ApplyDrive(float ForwardAxis, float SteerAxis, bool bHandbrake);
 	void StopPhysics();
 	void SetVehicleMesh(USkeletalMesh* NewMesh, UPhysicsAsset* PhysicsAsset);
+	// Registers the Chaos movement component (bAutoRegister is off) once the mesh has its asset.
+	void RegisterVehicleMovement();
+	// The Chaos vehicle is registered and can be driven.
+	bool IsVehicleLive() const { return LiveMovement() != nullptr; }
 	void ApplyPaint(UMaterialInterface* BodyMaterial, UMaterialInterface* WheelMaterial);
 
 	// Driving class (data/config/vehicles.json). SetCarClass reapplies the handling at once.
@@ -90,6 +95,9 @@ protected:
 
 private:
 	UChaosWheeledVehicleMovementComponent* Movement() const;
+	// Movement() only once registered (bAutoRegister is off; an unbaked car never registers). Use it
+	// for everything that drives or reads the running vehicle; Movement() is for setup only.
+	UChaosWheeledVehicleMovementComponent* LiveMovement() const;
 	void ConfigureMechanical();
 	void SetupWheel(UStaticMeshComponent* Wheel, const FVector& Offset, UStaticMesh* WheelMesh);
 	void Park();
@@ -127,6 +135,8 @@ private:
 	TObjectPtr<UStaticMeshComponent> Cabin;
 
 	bool bOccupied = false;
+	// RegisterVehicleMovement warned that this car has no mesh (once per car).
+	bool bWarnedNoMesh = false;
 	bool bTestDrive = false;
 	bool bHandlingApplied = false;
 	float VisualSteerDegrees = 0.f;

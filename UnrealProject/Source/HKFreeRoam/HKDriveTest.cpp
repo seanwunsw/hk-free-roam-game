@@ -209,6 +209,14 @@ void AHKDriveTestRunner::NextClass()
 		NextClass();
 		return;
 	}
+	if (!Car->IsVehicleLive())
+	{
+		UE_LOG(LogHK, Error, TEXT("HKDriveTest: the %s car has no Chaos vehicle (world not baked?); skipping it"), HKHandling::ClassName(Current));
+		Car->Destroy();
+		Car = nullptr;
+		NextClass();
+		return;
+	}
 	Car->BeginTestDrive();
 	Car->AddTickPrerequisiteActor(this);
 	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
