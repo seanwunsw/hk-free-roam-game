@@ -196,6 +196,7 @@ namespace
 		Num(Cam, TEXT("ShakeDeg"), Ca.ShakeDeg);
 		Num(Cam, TEXT("BumpShakeDeg"), Ca.BumpShakeDeg);
 		Num(Cam, TEXT("RecenterDelay"), Ca.RecenterDelay);
+		Bool(Cam, TEXT("RecenterWhenParked"), Ca.bRecenterWhenParked);
 		Num(Cam, TEXT("LagSpeed"), Ca.LagSpeed);
 
 		const TSharedPtr<FJsonObject> B = Section(Spec, TEXT("Body"));

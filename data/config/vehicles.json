@@ -165,7 +165,8 @@
       "ShakeStartKmh": 150,
       "ShakeDeg": 0.35,
       "BumpShakeDeg": 0.6,
-      "RecenterDelay": 1.2,
+      "RecenterDelay": 1.75,
+      "RecenterWhenParked": true,
       "LagSpeed": 12.0
     },
     "Body": {

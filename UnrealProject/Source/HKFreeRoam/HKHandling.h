@@ -98,7 +98,9 @@ struct FHKCameraConfig
 	float ShakeStartKmh = 150.f;
 	float ShakeDeg = 0.35f;
 	float BumpShakeDeg = 0.6f;
-	float RecenterDelay = 1.2f;
+	float RecenterDelay = 1.75f;
+	// false: GTA-style, the view stays where the mouse left it until the car moves (> 10 km/h).
+	bool bRecenterWhenParked = true;
 	float LagSpeed = 12.f;
 };
 

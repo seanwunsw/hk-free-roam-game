@@ -70,6 +70,7 @@ public:
 	FName CarId() const { return Tags.Num() > 0 ? Tags[0] : NAME_None; }
 
 	void AddCameraLook(float YawDeg, float PitchDeg);
+	void AddCameraZoom(float Notches);
 	UHKChaseCamera* GetChaseCamera() const { return ChaseCamera; }
 	const FHKCarTelemetry& Telemetry() const { return Telem; }
 
@@ -103,6 +104,8 @@ private:
 	void Park();
 	void HoldIfGroundUnloaded();
 	void PatchWheelBones();
+	// Chase camera, arm (and its collision sweep) and camera tick only while driven.
+	void SetCameraRigActive(bool bActive);
 	void EnableChassisPhysics();
 	void UpdateWheelVisuals(float DeltaSeconds);
 	void SelfRightIfFlipped(float DeltaSeconds);

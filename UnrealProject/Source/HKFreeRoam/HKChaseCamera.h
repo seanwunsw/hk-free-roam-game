@@ -3,7 +3,8 @@
 // GTA-style chase camera for AHKCar. Drives the car's spring arm and camera after physics:
 // yaw follows a critically damped spring toward the car heading blended with the velocity
 // heading, the arm pulls back on throttle and speed and pushes in under braking, FOV widens
-// with speed, small shake at high speed and on bumps, mouse look recentres after a delay.
+// with speed, small shake at high speed and on bumps. The mouse orbits 360 degrees around the
+// car and recentres behind it after RecenterDelay; the scroll wheel zooms.
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
@@ -34,8 +35,16 @@ public:
 	void SetConfig(const FHKCameraConfig& InConfig) { Config = InConfig; }
 	// Jump straight behind the car (possess, teleport, reset).
 	void Snap();
-	// Mouse look in degrees (+X right, +Y up).
+	// Mouse orbit in degrees (+X right, +Y up).
 	void AddLook(float YawDeg, float PitchDeg);
+	// Scroll-wheel zoom, in wheel notches (+ = in).
+	void AddZoom(float Notches);
+
+	// Arm pivot above the car origin (the mesh root is on the road). The spring arm's collision
+	// probe starts here, so it must sit above the body, clear of the road and the car.
+	static constexpr float PivotCm = 110.f;
+	static constexpr float MinZoom = 0.5f;
+	static constexpr float MaxZoom = 2.2f;
 
 	const FHKCameraJitter& Jitter() const { return JitterStats; }
 	void ResetJitter() { JitterStats = FHKCameraJitter(); JitterHistory = 0; }
@@ -58,6 +67,8 @@ private:
 	float LookPitch = 0.f;
 	float LookIdle = 100.f;
 	float Arm = 600.f;
+	float Zoom = 1.f;
+	float ZoomTarget = 1.f;
 	float LatShift = 0.f;
 	float Roll = 0.f;
 	float Fov = 80.f;

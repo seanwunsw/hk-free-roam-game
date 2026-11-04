@@ -24,7 +24,14 @@ void UHKChaseCamera::Init(USpringArmComponent* InBoom, UCameraComponent* InCamer
 		Boom->SetUsingAbsoluteRotation(true);
 		Boom->bEnableCameraLag = true;
 		Boom->bEnableCameraRotationLag = false;
-		Boom->bDoCollisionTest = true;
+		// The mesh root (the boom's parent) is on the road. With the pivot there the probe sphere
+		// started inside the road, the sweep reported a start-penetrating hit and the arm collapsed
+		// to length 0: the camera sat on the road under the car. Pivot above the roof instead; the
+		// camera height goes in TargetOffset (world up, part of the probe start) rather than the
+		// swept SocketOffset.
+		Boom->SetRelativeLocation(FVector(0.f, 0.f, PivotCm));
+		Boom->ProbeSize = 12.f;
+		Boom->ProbeChannel = ECC_Camera;
 		// The arm applies the rotation set here in the same frame.
 		Boom->SetTickGroup(TG_PostPhysics);
 		Boom->AddTickPrerequisiteComponent(this);
@@ -42,7 +49,7 @@ void UHKChaseCamera::Snap()
 	YawVel = 0.f;
 	LookYaw = LookPitch = 0.f;
 	LookIdle = 100.f;
-	Arm = Config.ArmCm;
+	Arm = Config.ArmCm * Zoom;
 	LatShift = Roll = LongG = LatG = Bump = 0.f;
 	Fov = Config.BaseFov;
 	bHasPrev = false;
@@ -53,11 +60,17 @@ void UHKChaseCamera::Snap()
 void UHKChaseCamera::AddLook(float YawDeg, float PitchDeg)
 {
 	LookYaw = FMath::UnwindDegrees(LookYaw + YawDeg);
-	LookPitch = FMath::Clamp(LookPitch + PitchDeg, -50.f, 25.f);
+	// Step() clamps it further so the camera stays above the road.
+	LookPitch = FMath::Clamp(LookPitch + PitchDeg, -60.f, 30.f);
 	if (FMath::Abs(YawDeg) + FMath::Abs(PitchDeg) > 0.01f)
 	{
 		LookIdle = 0.f;
 	}
+}
+
+void UHKChaseCamera::AddZoom(float Notches)
+{
+	ZoomTarget = FMath::Clamp(ZoomTarget * FMath::Pow(0.88f, Notches), MinZoom, MaxZoom);
 }
 
 void UHKChaseCamera::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -144,18 +157,23 @@ void UHKChaseCamera::Step(float Dt)
 		}
 
 		LookIdle += Dt;
-		if (LookIdle > Config.RecenterDelay && Kmh > 10.f)
+		if (LookIdle > Config.RecenterDelay && (Config.bRecenterWhenParked || Kmh > 10.f))
 		{
-			const float Decay = FMath::Exp(-2.5f * Dt);
+			// Swing back behind the car along the shorter way (LookYaw stays within +-180), faster
+			// at speed; eased in over the first half second so it never snaps.
+			const float Ease = FMath::Clamp((LookIdle - Config.RecenterDelay) / 0.5f, 0.f, 1.f);
+			const float Rate = Ease * FMath::Lerp(1.f, 4.5f, FMath::Clamp(Kmh / 120.f, 0.f, 1.f));
+			const float Decay = FMath::Exp(-Rate * Dt);
 			LookYaw *= Decay;
 			LookPitch *= Decay;
 		}
+		Zoom += (ZoomTarget - Zoom) * (1.f - FMath::Exp(-8.f * Dt));
 
 		const float Pull = Config.SpeedPullCm * FMath::Clamp(Kmh / 200.f, 0.f, 1.f)
 			+ Config.AccelPullCm * FMath::Clamp(LongG / 0.5f, 0.f, 1.f)
 			- Config.BrakePushCm * FMath::Clamp(-LongG / 0.8f, 0.f, 1.f);
 		const float Follow = 1.f - FMath::Exp(-3.f * Dt);
-		Arm += (Config.ArmCm + Pull - Arm) * Follow;
+		Arm += ((Config.ArmCm + Pull) * Zoom - Arm) * Follow;
 		LatShift += (-Config.LatShiftCm * FMath::Clamp(LatG, -1.2f, 1.2f) - LatShift) * Follow;
 		Roll += (Config.LatRollDeg * FMath::Clamp(LatG, -1.2f, 1.2f) - Roll) * Follow;
 		const float FovTarget = Config.BaseFov + Config.FovAdd * FMath::SmoothStep(0.f, 1.f, Kmh / FMath::Max(Config.FovSpeedKmh, 1.f));
@@ -167,9 +185,16 @@ void UHKChaseCamera::Step(float Dt)
 	const float ShakeYaw = Shake * 0.6f * FMath::PerlinNoise1D(Time * 5.1f + 31.7f);
 
 	const float RigYaw = Yaw + LookYaw;
-	Boom->SetWorldRotation(FRotator(Config.PitchDeg + LookPitch + ShakePitch, RigYaw + ShakeYaw, 0.f));
+	// Camera height above the road is HeightCm - Arm * sin(pitch); keep it >= MinHeight so orbiting
+	// never puts the camera under the road (the probe would then pull it into the car).
+	constexpr float MinHeightCm = 45.f;
+	const float MaxPitch = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp((Config.HeightCm - MinHeightCm) / FMath::Max(Arm, 1.f), -1.f, 1.f)));
+	const float Pitch = FMath::Clamp(Config.PitchDeg + LookPitch, -70.f, MaxPitch);
+	LookPitch = Pitch - Config.PitchDeg; // no wind-up past the clamp
+	Boom->SetWorldRotation(FRotator(Pitch + ShakePitch, RigYaw + ShakeYaw, 0.f));
 	Boom->TargetArmLength = Arm;
-	Boom->SocketOffset = FVector(0.f, LatShift, Config.HeightCm);
+	Boom->TargetOffset = FVector(0.f, 0.f, Config.HeightCm - PivotCm);
+	Boom->SocketOffset = FVector(0.f, LatShift, 0.f);
 	Boom->CameraLagSpeed = Config.LagSpeed;
 	if (Camera)
 	{

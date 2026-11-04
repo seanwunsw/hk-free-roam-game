@@ -89,8 +89,10 @@ AHKCar::AHKCar()
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetMesh());
+	// Pivot above the roof: the mesh root is on the road (see UHKChaseCamera::Init).
+	CameraBoom->SetRelativeLocation(FVector(0.f, 0.f, UHKChaseCamera::PivotCm));
 	CameraBoom->TargetArmLength = 560.f;
-	CameraBoom->SocketOffset = FVector(0.f, 0.f, 150.f);
+	CameraBoom->TargetOffset = FVector(0.f, 0.f, 150.f - UHKChaseCamera::PivotCm);
 	// UHKChaseCamera owns the rotation; the control rotation only matters on foot.
 	CameraBoom->bUsePawnControlRotation = false;
 	CameraBoom->bEnableCameraLag = true;
@@ -101,6 +103,12 @@ AHKCar::AHKCar()
 	FollowCamera->bUsePawnControlRotation = false;
 
 	ChaseCamera = CreateDefaultSubobject<UHKChaseCamera>(TEXT("ChaseCamera"));
+	// 26 parked cars: the rig (substepped follow + arm sweep) runs only while a car is driven or
+	// test-driven, see SetCameraRigActive.
+	ChaseCamera->PrimaryComponentTick.bStartWithTickEnabled = false;
+	CameraBoom->PrimaryComponentTick.bStartWithTickEnabled = false;
+	CameraBoom->bDoCollisionTest = false;
+	FollowCamera->PrimaryComponentTick.bStartWithTickEnabled = false;
 
 	// Per-class cabin block on the baked chassis box, painted with the body. Visual only.
 	Cabin = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Cabin"));
@@ -615,7 +623,7 @@ void AHKCar::PossessedBy(AController* NewController)
 	}
 	DriverInput = hkdrive::Input();
 	AssistMemory = hkdrive::Memory();
-	ChaseCamera->Snap();
+	SetCameraRigActive(true);
 }
 
 void AHKCar::UnPossessed()
@@ -624,7 +632,23 @@ void AHKCar::UnPossessed()
 	GetMesh()->SetUseCCD(false);
 	DriverInput = hkdrive::Input();
 	Park();
+	if (!bTestDrive)
+	{
+		SetCameraRigActive(false);
+	}
 	Super::UnPossessed();
+}
+
+void AHKCar::SetCameraRigActive(bool bActive)
+{
+	ChaseCamera->SetComponentTickEnabled(bActive);
+	CameraBoom->SetComponentTickEnabled(bActive);
+	CameraBoom->bDoCollisionTest = bActive;
+	FollowCamera->SetComponentTickEnabled(bActive);
+	if (bActive)
+	{
+		ChaseCamera->Snap();
+	}
 }
 
 void AHKCar::BeginTestDrive()
@@ -639,7 +663,7 @@ void AHKCar::BeginTestDrive()
 		Move->SetRequiresControllerForInputs(false);
 	}
 	Autopilot = hkdrive::Input();
-	ChaseCamera->Snap();
+	SetCameraRigActive(true);
 }
 
 void AHKCar::EndTestDrive()
@@ -648,6 +672,10 @@ void AHKCar::EndTestDrive()
 	bOccupied = false;
 	Autopilot.Reset();
 	Park();
+	if (!IsPlayerControlled())
+	{
+		SetCameraRigActive(false);
+	}
 }
 
 void AHKCar::ResetMotion(const FVector& Location, float YawDeg)
@@ -669,6 +697,11 @@ void AHKCar::ResetMotion(const FVector& Location, float YawDeg)
 void AHKCar::AddCameraLook(float YawDeg, float PitchDeg)
 {
 	ChaseCamera->AddLook(YawDeg, PitchDeg);
+}
+
+void AHKCar::AddCameraZoom(float Notches)
+{
+	ChaseCamera->AddZoom(Notches);
 }
 
 void AHKCar::Park()
