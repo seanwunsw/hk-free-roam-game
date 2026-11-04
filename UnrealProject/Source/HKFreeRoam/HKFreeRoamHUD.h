@@ -38,4 +38,5 @@ private:
 	FString StreetZh;
 	FString StreetEn;
 	FString AreaText;
+	FString LandmarkText;
 };

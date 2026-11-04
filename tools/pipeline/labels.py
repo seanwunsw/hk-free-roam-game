@@ -135,3 +135,59 @@ def district_areas(warp, districts_ll: list[dict], tolerance_m: float = 25.0, mi
             cx, cy = (float(v) for v in np.vstack([np.column_stack(warp.lonlat_to_game_m(r[:, 0], r[:, 1])) for r in district["rings"]]).mean(axis=0))
             out.append({"zh": district["zh"], "en": district["en"], "kind": "district", "x_m": round(cx, 1), "y_m": round(cy, 1), "rings": rings})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Landmarks: stations, hospitals, malls and rivers for the HUD (within 300 m) and minimap icons
+# ---------------------------------------------------------------------------
+LANDMARK_KINDS = ("station", "lrt", "tram", "hospital", "mall", "river")
+RIVER_STEP_M = 400.0
+LANDMARK_MERGE_M = 300.0
+
+
+def landmark_kind(tags) -> str | None:
+    railway = tags.get("railway")
+    if railway in ("station", "halt") or (tags.get("public_transport") == "station" and (tags.get("train") == "yes" or tags.get("light_rail") == "yes" or tags.get("subway") == "yes")):
+        if tags.get("station") == "light_rail" or tags.get("light_rail") == "yes":
+            return "lrt"
+        return "station"
+    if railway == "tram_stop":
+        return "lrt" if tags.get("light_rail") == "yes" or tags.get("tram") != "yes" else "tram"
+    if tags.get("amenity") == "hospital" or tags.get("healthcare") == "hospital":
+        return "hospital"
+    if tags.get("shop") == "mall":
+        return "mall"
+    return None
+
+
+def landmark_points(warp, items: list[dict], rivers: list[dict], bounds) -> list[dict]:
+    """Game-metre landmark points; a station's node and area (or several entrances) merge
+    into one point per name and kind within 300 m. Rivers get a point every 400 m."""
+    out: list[dict] = []
+    for item in items:
+        x, y = warp.lonlat_to_game_m(np.array([item["lon"]]), np.array([item["lat"]]))
+        out.append({"zh": item["zh"], "en": item["en"], "kind": item["kind"], "x_m": float(x[0]), "y_m": float(y[0])})
+    for river in rivers:
+        gx, gy = warp.lonlat_to_game_m(river["ll"][:, 0], river["ll"][:, 1])
+        xy = np.column_stack([gx, gy])
+        if len(xy) < 2:
+            continue
+        s = np.r_[0.0, np.cumsum(np.hypot(*np.diff(xy, axis=0).T))]
+        for target in np.arange(RIVER_STEP_M * 0.5, max(s[-1], 1.0), RIVER_STEP_M):
+            x = float(np.interp(target, s, xy[:, 0]))
+            y = float(np.interp(target, s, xy[:, 1]))
+            out.append({"zh": river["zh"], "en": river["en"], "kind": "river", "x_m": x, "y_m": y})
+    kept: list[dict] = []
+    by_key: dict[tuple, list[dict]] = {}
+    for point in out:
+        if not (bounds[0] <= point["x_m"] <= bounds[2] and bounds[1] <= point["y_m"] <= bounds[3]):
+            continue
+        key = (point["zh"] or point["en"], point["kind"])
+        merge = LANDMARK_MERGE_M if point["kind"] != "river" else RIVER_STEP_M * 0.5
+        if any(math.hypot(o["x_m"] - point["x_m"], o["y_m"] - point["y_m"]) < merge for o in by_key.get(key, ())):
+            continue
+        point["x_m"] = round(point["x_m"], 1)
+        point["y_m"] = round(point["y_m"], 1)
+        by_key.setdefault(key, []).append(point)
+        kept.append(point)
+    return kept

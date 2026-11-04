@@ -41,7 +41,8 @@ from tools.pipeline.geometry import (
 from tools.pipeline.glbutil import write_glb
 from tools.pipeline import streetscape
 from tools.pipeline import coast as coastmask
-from tools.pipeline import labels, minimap_tiles
+from tools.pipeline import ground, labels, minimap_tiles
+from tools.pipeline import rail as railnet
 from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
 from tools.pipeline import spawns as spawn_rules
@@ -273,6 +274,10 @@ def extract_osm(path: Path, log: Log) -> dict:
     coasts = []
     place_nodes = []
     districts_ll = []
+    landuse_ll = []
+    landmark_items = []
+    rivers_ll = []
+    rails_ll = []
     seen = 0
     processor = osmium.FileProcessor(str(path)).with_locations().with_areas()
     for obj in processor:
@@ -282,6 +287,22 @@ def extract_osm(path: Path, log: Log) -> dict:
         try:
             if obj.is_area():
                 tags = obj.tags
+                if not tags.get("building"):
+                    ground_class = ground.classify(tags)
+                    if ground_class is not None:
+                        for ring in obj.outer_rings():
+                            outer = _ring_nodes(ring)
+                            if outer is not None and len(outer) <= 20000:
+                                landuse_ll.append((ground_class, outer))
+                landmark = labels.landmark_kind(tags)
+                if landmark:
+                    zh, en = labels.split_names(tags)
+                    if zh or en:
+                        for ring in obj.outer_rings():
+                            outer = _ring_nodes(ring)
+                            if outer is not None:
+                                landmark_items.append({"zh": zh, "en": en, "kind": landmark, "lon": float(outer[:, 0].mean()), "lat": float(outer[:, 1].mean())})
+                                break
                 kind = tags.get("building")
                 if kind and kind != "no" and tags.get("location") not in {"underground", "indoor"}:
                     outer = None
@@ -329,6 +350,20 @@ def extract_osm(path: Path, log: Log) -> dict:
                             break
             elif obj.is_way():
                 tags = obj.tags
+                railway = tags.get("railway")
+                if railway in RAIL_KINDS and not (
+                    _truthy(tags.get("bridge")) or _truthy(tags.get("tunnel")) or _layer_value(tags) != 0
+                    or tags.get("covered") == "yes" or tags.get("disused") == "yes"
+                ):
+                    # At-grade track only: viaducts and tunnels have no deck or portal to sit on.
+                    line = _way_nodes(obj)
+                    if line is not None:
+                        rails_ll.append({"ll": line, "kind": railway})
+                if tags.get("waterway") in {"river", "canal"} and (tags.get("name") or tags.get("name:zh") or tags.get("name:en")):
+                    line = _way_nodes(obj)
+                    if line is not None:
+                        zh, en = labels.split_names(tags)
+                        rivers_ll.append({"zh": zh, "en": en, "ll": line})
                 highway = tags.get("highway")
                 if highway in WALK_CLASS_SET:
                     walk = _walk_record(tags, highway)
@@ -388,13 +423,19 @@ def extract_osm(path: Path, log: Log) -> dict:
                     zh, en = labels.split_names(tags)
                     if zh or en:
                         place_nodes.append({"zh": zh, "en": en, "kind": tags.get("place"), "lon": obj.location.lon, "lat": obj.location.lat})
+                landmark = labels.landmark_kind(tags) if len(tags) else None
+                if landmark and obj.location.valid():
+                    zh, en = labels.split_names(tags)
+                    if zh or en:
+                        landmark_items.append({"zh": zh, "en": en, "kind": landmark, "lon": obj.location.lon, "lat": obj.location.lat})
         except Exception:
             continue
     log(
         f"osm done records {seen}  buildings {len(buildings_ll)}  roads {len(roads)}  "
         f"water {len(waters_ll)}  coast {len(coasts)}  walkways {len(walks)}  "
         f"one-way roads {sum(1 for r in roads if r['oneway'])}  named roads {sum(1 for r in roads if r['name_zh'] or r['name_en'])}  "
-        f"place nodes {len(place_nodes)}  districts {len(districts_ll)}"
+        f"place nodes {len(place_nodes)}  districts {len(districts_ll)}  landuse areas {len(landuse_ll)}  "
+        f"landmarks {len(landmark_items)}  rivers {len(rivers_ll)}  at-grade rail ways {len(rails_ll)}"
     )
     return {
         "buildings_ll": buildings_ll,
@@ -405,6 +446,10 @@ def extract_osm(path: Path, log: Log) -> dict:
         "coasts": coasts,
         "place_nodes": place_nodes,
         "districts_ll": districts_ll,
+        "landuse_ll": landuse_ll,
+        "landmark_items": landmark_items,
+        "rivers_ll": rivers_ll,
+        "rails_ll": rails_ll,
     }
 
 
@@ -1101,6 +1146,7 @@ def clip_under_bridges(buildings: list[dict], roads: list[dict], log: Log) -> li
     return kept
 
 
+RAIL_KINDS = frozenset({"light_rail", "rail", "narrow_gauge"})
 CARRIAGEWAY_CLASSES = frozenset(
     (
         "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary",
@@ -1346,13 +1392,15 @@ def _road_tile_prims(meshes: list[dict], landscape, tile: float) -> dict:
     return out
 
 
-def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, tile: float, log: Log) -> dict:
+def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, tile: float, log: Log, rails=()) -> dict:
     road_tiles = _road_tile_prims(roads, landscape, tile)
+    rail_tiles = _road_tile_prims(list(rails), landscape, tile)
     water_index = defaultdict(list)
     for water in waters:
         ix, iy = _tile_index(float(water["ring"][:, 0].mean()), float(water["ring"][:, 1].mean()), landscape, tile)
         water_index[(ix, iy)].append(water)
-    keys = set(tiles) | set(road_tiles) | set(water_index)
+    keys = set(tiles) | set(road_tiles) | set(water_index) | set(rail_tiles)
+    rail_tris = 0
     records = []
     tris = 0
     written = 0
@@ -1392,6 +1440,14 @@ def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, ti
             for prim in road_prims:
                 tris += len(prim["indices"]) // 3
                 road_tris_by_material[prim["material"]] = road_tris_by_material.get(prim["material"], 0) + len(prim["indices"]) // 3
+        rail_prims = rail_tiles.get((ix, iy))
+        if rail_prims:
+            path = tile_dir / f"l_{ix}_{iy}.glb"
+            write_glb(path, rail_prims)
+            record["rail"] = f"tiles/{path.name}"
+            count = sum(len(prim["indices"]) // 3 for prim in rail_prims)
+            tris += count
+            rail_tris += count
         accum = MeshAccum()
         for water in water_index.get((ix, iy), []):
             append_extrusion(
@@ -1409,15 +1465,15 @@ def _write_tile_meshes(tile_dir: Path, tiles: dict, roads, waters, landscape, ti
             write_glb(path, [prim])
             record["water"] = f"tiles/{path.name}"
             tris += len(prim["indices"]) // 3
-        if "buildings" in record or "roads" in record or "water" in record:
+        if "buildings" in record or "roads" in record or "water" in record or "rail" in record:
             records.append(record)
             written += 1
         if index and index % 400 == 0:
             log(f"wrote tiles {index}/{len(keys)}")
       except Exception:
             log(f"tile {ix},{iy} failed\n" + traceback.format_exc())
-    log(f"tile files referenced {written}  triangles {tris}  buildings {building_tris}  road by material {road_tris_by_material}")
-    return {"tiles": records, "triangles": tris, "building_triangles": building_tris, "road_triangles_by_material": {str(k): v for k, v in sorted(road_tris_by_material.items())}}
+    log(f"tile files referenced {written}  triangles {tris}  buildings {building_tris}  road by material {road_tris_by_material}  rail {rail_tris}")
+    return {"tiles": records, "triangles": tris, "building_triangles": building_tris, "rail_triangles": rail_tris, "road_triangles_by_material": {str(k): v for k, v in sorted(road_tris_by_material.items())}}
 
 
 def _find_pad(x: float, y: float, height: np.ndarray, landscape) -> tuple[float, float, float]:
@@ -1861,6 +1917,18 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     del walk_block
     visuals["walkways"] = walk_stats
     log(f"walkways {json.dumps(walk_stats)}")
+    # Level crossings: the road ribbon (plus a little) and junction fills own the surface.
+    rail_block = streetscape.Blockers(streetscape.ribbon_outlines(roads, pad=0.3) + fill_rings)
+    rail_mesh, rail_stats = railnet.strips(warp, extracted.get("rails_ll", []), rail_block, surface_at, bounds)
+    del rail_block
+    visuals["rail"] = rail_stats
+    log(f"rail {json.dumps(rail_stats)}")
+    ground_areas = []
+    landuse = extracted.get("landuse_ll", [])
+    for (ground_class, _), ring in zip(landuse, _batch_project(warp, [ring for _, ring in landuse])):
+        ground_areas.append((ground_class, ring))
+    ground_grid, ground_rgb = ground.rasterise(out / ground.FILE_NAME, landscape, is_land, height, ground_areas, log)
+    del ground_areas
     road_meshes = ribbons + [m for m in (fill_mesh, pave_mesh, walk_mesh) if m is not None]
     tile = float(config["tile_size_m"])
     grouped = defaultdict(list)
@@ -1870,11 +1938,12 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     if tile_dir.exists():
         shutil.rmtree(tile_dir)
     tile_dir.mkdir(parents=True, exist_ok=True)
-    mesh_info = _write_tile_meshes(tile_dir, grouped, road_meshes, waters, landscape, tile, log)
+    mesh_info = _write_tile_meshes(tile_dir, grouped, road_meshes, waters, landscape, tile, log, rails=[rail_mesh] if rail_mesh is not None else [])
     visuals["triangles"] = {
         "total": mesh_info["triangles"],
         "buildings": mesh_info["building_triangles"],
         "road_by_material": mesh_info["road_triangles_by_material"],
+        "rail": mesh_info["rail_triangles"],
     }
     road_stats["visuals"] = visuals
     index = spawn_rules.SurfaceIndex(road_meshes, buildings, surface_at)
@@ -1891,9 +1960,18 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         roads,
         labels.place_points(warp, extracted.get("place_nodes", []), bounds),
         labels.district_areas(warp, extracted.get("districts_ll", [])),
+        labels.landmark_points(warp, extracted.get("landmark_items", []), extracted.get("rivers_ll", []), bounds),
     )
     log(f"road names {json.dumps(labels.stats(names_doc))}")
-    local_map = minimap_tiles.draw_tiles(out / "minimap_tiles", landscape, is_land, height, roads, buildings, waters, log=log)
+    rail_lines = []
+    for item in extracted.get("rails_ll", []):
+        gx, gy = warp.lonlat_to_game_m(item["ll"][:, 0], item["ll"][:, 1])
+        rail_lines.append((np.column_stack([gx, gy]), 3.0, (116, 92, 112)))
+    local_map = minimap_tiles.draw_tiles(
+        out / "minimap_tiles", landscape, is_land, height, roads, buildings, waters,
+        ground_rgb=ground.sampler(ground_grid, ground_rgb), extra_lines=rail_lines, log=log,
+    )
+    del ground_rgb
     mask = write_land_mask(out, config, land, extract, grids, log)
     dem = load_dem()
     harbour_rows = measure_harbour(warp, dem, is_land=mask.is_land) if dem is not None else []
@@ -1925,6 +2003,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         "building_road_overlap": overlap,
         "road_names": names_doc,
         "minimap_tiles": local_map,
+        "ground": ground_grid,
         "notes": notes,
         "counts": {
             "osm_buildings": len(extracted["buildings_ll"]),
@@ -1993,6 +2072,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "landmarks_file": "landmarks.json",
         "road_names_file": "road_names.json",
         "minimap_tiles": built["minimap_tiles"],
+        "ground_texture": built["ground"],
         "warp_lut": "warp_lut.bin",
     }
     (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -2005,6 +2085,9 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "road_heights": built.get("road_heights"),
         "building_road_overlap": built.get("building_road_overlap"),
         "road_names": labels.stats(built["road_names"]) if built.get("road_names") else None,
+        "ground_texture": {k: built["ground"][k] for k in ("file", "width_px", "height_px", "m_per_px_x", "m_per_px_y", "areas", "by_key", "bytes")},
+        "minimap_tiles": {k: built["minimap_tiles"][k] for k in ("tiles", "nx", "ny", "px", "tile_m", "bytes")},
+        "rail": built["road_heights"]["visuals"].get("rail"),
         "harbour_game_width_m": {
             "sections": len(widths),
             "min": min_harbour,

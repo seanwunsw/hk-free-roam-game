@@ -31,6 +31,8 @@
 #include "GameFramework/PhysicsVolume.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameMapsSettings.h"
+#include "ImageCore.h"
+#include "ImageUtils.h"
 #include "Landscape.h"
 #include "LandscapeInfo.h"
 #include "Materials/Material.h"
@@ -38,6 +40,7 @@
 #include "Materials/MaterialExpressionConstant3Vector.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
+#include "Materials/MaterialExpressionTextureObject.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
@@ -152,7 +155,7 @@ UMaterial* FinishMaterial(UMaterial* Material)
 	return Material;
 }
 
-UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool bNanite, bool bTranslucent, bool bWorldPos, bool bUV1 = false)
+UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool bNanite, bool bTranslucent, bool bWorldPos, bool bUV1 = false, UTexture* Texture = nullptr)
 {
 	const FString PackageName = FString::Printf(TEXT("/Game/HK/Materials/%s"), AssetName);
 	UPackage* Package = CreatePackage(*PackageName);
@@ -208,6 +211,17 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 		AddExpression(Material, TexCoord1);
 		Custom->Inputs.Last().Input.Connect(0, TexCoord1);
 	}
+	if (Texture)
+	{
+		// A texture object input named GroundTex gives the HLSL GroundTex and GroundTexSampler.
+		FCustomInput& TexIn = Custom->Inputs.AddDefaulted_GetRef();
+		TexIn.InputName = TEXT("GroundTex");
+		UMaterialExpressionTextureObject* Object = NewObject<UMaterialExpressionTextureObject>(Material);
+		Object->Texture = Texture;
+		Object->SamplerType = SAMPLERTYPE_Color;
+		AddExpression(Material, Object);
+		Custom->Inputs.Last().Input.Connect(0, Object);
+	}
 	UMaterialExpressionConstant* Rough = NewObject<UMaterialExpressionConstant>(Material);
 	Rough->R = bTranslucent ? 0.15f : 0.75f;
 	AddExpression(Material, Rough);
@@ -225,6 +239,34 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	}
 	// Landscape materials need no EMaterialUsage flag; there is no MATUSAGE_Landscape.
 	return FinishMaterial(Material);
+}
+
+// data/processed/ground_color.png (tools/pipeline/ground.py) as /Game/HK/Textures/T_Ground:
+// 4096 px over the landscape, row 0 at the north edge, sRGB, clamped.
+UTexture2D* ImportGroundTexture(const FString& Path)
+{
+	FImage Image;
+	if (!FImageUtils::LoadImage(*Path, Image))
+	{
+		UE_LOG(LogHK, Warning, TEXT("Ground colour %s was not loaded; M_Terrain falls back to height bands"), *Path);
+		return nullptr;
+	}
+	const TCHAR* AssetName = TEXT("T_Ground");
+	UPackage* Package = CreatePackage(TEXT("/Game/HK/Textures/T_Ground"));
+	ReplaceObject(Package, AssetName, UTexture2D::StaticClass());
+	UTexture2D* Texture = NewObject<UTexture2D>(Package, AssetName, RF_Public | RF_Standalone);
+	Texture->Source.Init(Image);
+	Texture->SRGB = true;
+	Texture->AddressX = TA_Clamp;
+	Texture->AddressY = TA_Clamp;
+	Texture->LODGroup = TEXTUREGROUP_World;
+	Texture->CompressionSettings = TC_Default;
+	Texture->MipGenSettings = TMGS_FromTextureGroup;
+	Texture->PostEditChange();
+	FAssetRegistryModule::AssetCreated(Texture);
+	SaveAsset(Texture);
+	UE_LOG(LogHK, Display, TEXT("Ground colour %dx%d imported from %s"), Image.SizeX, Image.SizeY, *Path);
+	return Texture;
 }
 
 UMaterial* MakeCarMaterial()
@@ -1012,10 +1054,44 @@ bool UHKBakeLibrary::BakeWorld()
 		TEXT("M_Water"),
 		TEXT("return float3(0.04, 0.16, 0.24);\n"),
 		false, true, false);
-	UMaterial* Terrain = MakeCustomMaterial(
-		TEXT("M_Terrain"),
-		TEXT("float h = saturate(WorldPos.z / 18000.0);\nfloat3 low = float3(0.15, 0.28, 0.13);\nfloat3 high = float3(0.42, 0.40, 0.34);\nreturn lerp(low, high, h);\n"),
-		false, false, true);
+	// Landuse, parks, woods and water from OSM, sampled by world XY (cm, UE Y = -game Y).
+	UTexture2D* GroundTexture = nullptr;
+	double GroundMinX = 0, GroundMaxX = 1, GroundMinY = 0, GroundMaxY = 1;
+	const TSharedPtr<FJsonObject>* GroundObject = nullptr;
+	if (Manifest->TryGetObjectField(TEXT("ground_texture"), GroundObject) && GroundObject && GroundObject->IsValid())
+	{
+		FString GroundFile;
+		(*GroundObject)->TryGetStringField(TEXT("file"), GroundFile);
+		(*GroundObject)->TryGetNumberField(TEXT("min_x_m"), GroundMinX);
+		(*GroundObject)->TryGetNumberField(TEXT("max_x_m"), GroundMaxX);
+		(*GroundObject)->TryGetNumberField(TEXT("min_y_m"), GroundMinY);
+		(*GroundObject)->TryGetNumberField(TEXT("max_y_m"), GroundMaxY);
+		if (!GroundFile.IsEmpty())
+		{
+			GroundTexture = ImportGroundTexture(FPaths::Combine(Processed, GroundFile));
+		}
+	}
+	const FString TerrainCode = GroundTexture
+		? FString::Printf(
+			TEXT("float2 uv = float2((WorldPos.x * 0.01 - (%.3f)) / %.3f, ((%.3f) + WorldPos.y * 0.01) / %.3f);\n")
+			TEXT("float3 c = Texture2DSample(GroundTex, GroundTexSampler, uv).rgb;\n")
+			TEXT("float h = saturate(WorldPos.z / 60000.0);\n")
+			TEXT("return c * lerp(1.0, 0.88, h);\n"),
+			GroundMinX, FMath::Max(GroundMaxX - GroundMinX, 1.0), GroundMaxY, FMath::Max(GroundMaxY - GroundMinY, 1.0))
+		: FString(TEXT("float h = saturate(WorldPos.z / 18000.0);\nfloat3 low = float3(0.15, 0.28, 0.13);\nfloat3 high = float3(0.42, 0.40, 0.34);\nreturn lerp(low, high, h);\n"));
+	UMaterial* Terrain = MakeCustomMaterial(TEXT("M_Terrain"), TerrainCode, false, false, true, false, GroundTexture);
+	// At-grade Light Rail and rail strips (tools/pipeline/rail.py): UV.x metres along, UV.y
+	// metres across a 3 m strip. Ballast, sleepers every 0.65 m, two rails 1.435 m apart.
+	UMaterial* RailMat = MakeCustomMaterial(
+		TEXT("M_Rail"),
+		TEXT("float y = UV.y;\n")
+			TEXT("float along = UV.x;\n")
+			TEXT("float3 c = float3(0.20, 0.18, 0.16);\n")
+			TEXT("float sleeper = step(frac(along / 0.65), 0.32) * step(0.35, y) * step(y, 2.65);\n")
+			TEXT("c = lerp(c, float3(0.30, 0.26, 0.22), sleeper);\n")
+			TEXT("float rail = saturate(step(abs(y - 0.78), 0.04) + step(abs(y - 2.22), 0.04));\n")
+			TEXT("return lerp(c, float3(0.62, 0.62, 0.64), rail);\n"),
+		false, false, false);
 	UMaterial* CarMat = MakeCarMaterial();
 	UMaterial* PadMat = MakeCustomMaterial(
 		TEXT("M_Helipad"),
@@ -1029,6 +1105,7 @@ bool UHKBakeLibrary::BakeWorld()
 	SaveAsset(Road);
 	SaveAsset(WaterMat);
 	SaveAsset(Terrain);
+	SaveAsset(RailMat);
 	SaveAsset(CarMat);
 	SaveAsset(PadMat);
 	SaveAsset(HeliMat);
@@ -1124,6 +1201,7 @@ bool UHKBakeLibrary::BakeWorld()
 			// collision comes from that fallback too, which tilted the flat ribbons and made the player slide.
 			ImportOne(TEXT("roads"), Road, TEXT("Road"), false, EHKMeshCollision::Road, Hlod);
 			ImportOne(TEXT("water"), WaterMat, TEXT("Water"), false, EHKMeshCollision::None, nullptr);
+			ImportOne(TEXT("rail"), RailMat, TEXT("Rail"), false, EHKMeshCollision::None, Hlod);
 			if (Index > 0 && Index % 250 == 0)
 			{
 				UE_LOG(LogHK, Display, TEXT("Imported %d tile meshes (%d failed)"), Imported, Failed);

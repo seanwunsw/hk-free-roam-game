@@ -15,6 +15,30 @@
 #include "GameFramework/Pawn.h"
 #include "WorldPartition/WorldPartitionSubsystem.h"
 
+namespace
+{
+	const TCHAR* LandmarkWord(const FString& Kind)
+	{
+		if (Kind == TEXT("station")) return TEXT("港鐵");
+		if (Kind == TEXT("lrt")) return TEXT("輕鐵");
+		if (Kind == TEXT("tram")) return TEXT("電車");
+		if (Kind == TEXT("hospital")) return TEXT("醫院");
+		if (Kind == TEXT("mall")) return TEXT("商場");
+		if (Kind == TEXT("river")) return TEXT("河");
+		return TEXT("");
+	}
+
+	FLinearColor LandmarkColour(const FString& Kind)
+	{
+		if (Kind == TEXT("station")) return FLinearColor(0.80f, 0.06f, 0.08f);
+		if (Kind == TEXT("lrt")) return FLinearColor(0.92f, 0.50f, 0.06f);
+		if (Kind == TEXT("tram")) return FLinearColor(0.10f, 0.50f, 0.22f);
+		if (Kind == TEXT("hospital")) return FLinearColor(0.95f, 0.95f, 0.95f);
+		if (Kind == TEXT("mall")) return FLinearColor(0.70f, 0.25f, 0.70f);
+		return FLinearColor(0.35f, 0.65f, 0.95f);
+	}
+}
+
 void AHKFreeRoamHUD::DrawHUD()
 {
 	Super::DrawHUD();
@@ -111,6 +135,7 @@ void AHKFreeRoamHUD::UpdateLabels()
 	StreetZh.Reset();
 	StreetEn.Reset();
 	AreaText.Reset();
+	LandmarkText.Reset();
 	UHKGameInstance* Game = GetWorld()->GetGameInstance<UHKGameInstance>();
 	APawn* Pawn = GetOwningPawn();
 	if (!Game || !Pawn)
@@ -154,15 +179,43 @@ void AHKFreeRoamHUD::UpdateLabels()
 		const FString& PlaceName = Place->Zh.IsEmpty() ? Place->En : Place->Zh;
 		AreaText = AreaText.IsEmpty() ? PlaceName : FString::Printf(TEXT("%s · %s"), *AreaText, *PlaceName);
 	}
+	if (const FHKLabelPoint* Mark = Labels.NearestLandmark(Here.X, Here.Y, 300.0))
+	{
+		const FString& MarkName = Mark->Zh.IsEmpty() ? Mark->En : Mark->Zh;
+		const FString English = Mark->Zh.IsEmpty() || Mark->En.IsEmpty() ? FString() : FString::Printf(TEXT("  %s"), *Mark->En);
+		LandmarkText = FString::Printf(TEXT("%s  %s%s  %.0f m"), LandmarkWord(Mark->Kind), *MarkName, *English,
+			FVector2D::Distance(Here, FVector2D(Mark->X, Mark->Y)));
+	}
 }
 
 void AHKFreeRoamHUD::DrawStreetName()
 {
+	UFont* Font = GEngine->GetSmallFont();
+	const float Bottom = Canvas->SizeY - 92.f - 12.f;
+	float Top = Bottom;
+	if (!StreetZh.IsEmpty())
+	{
+		float ZhW = 0.f, ZhH = 0.f, EnW = 0.f, EnH = 0.f;
+		GetTextSize(StreetZh, ZhW, ZhH, Font, 1.8f);
+		if (!StreetEn.IsEmpty())
+		{
+			GetTextSize(StreetEn, EnW, EnH, Font, 1.0f);
+		}
+		Top = Bottom - (ZhH + EnH + 14.f);
+	}
+	if (!LandmarkText.IsEmpty())
+	{
+		float LW = 0.f, LH = 0.f;
+		GetTextSize(LandmarkText, LW, LH, Font, 1.0f);
+		const float LX = (Canvas->SizeX - LW) * 0.5f;
+		const float LY = Top - LH - 10.f;
+		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.4f), LX - 10.f, LY - 3.f, LW + 20.f, LH + 6.f);
+		DrawText(LandmarkText, FLinearColor(0.95f, 0.9f, 0.75f), LX, LY, Font, 1.0f);
+	}
 	if (StreetZh.IsEmpty())
 	{
 		return;
 	}
-	UFont* Font = GEngine->GetSmallFont();
 	float ZhW = 0.f, ZhH = 0.f, EnW = 0.f, EnH = 0.f;
 	GetTextSize(StreetZh, ZhW, ZhH, Font, 1.8f);
 	if (!StreetEn.IsEmpty())
@@ -327,6 +380,41 @@ void AHKFreeRoamHUD::DrawLocalMap(float X, float Y, float W, float H)
 	Candidates.Sort([](const FCandidate& A, const FCandidate& B) { return A.Rank != B.Rank ? A.Rank < B.Rank : A.D2 < B.D2; });
 	TArray<FVector2D> Placed;
 	UFont* Font = GEngine->GetSmallFont();
+
+	// Landmark icons; station and Light Rail stop names beside them (up to six).
+	int32 MarkNames = 0;
+	for (const FHKLabelPoint& Mark : Labels.GetLandmarks())
+	{
+		if (Mark.Kind == TEXT("river"))
+		{
+			continue;
+		}
+		const FVector2D P = ToScreen(Mark.X, Mark.Y);
+		if (!Inside(P, 6.f))
+		{
+			continue;
+		}
+		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.8f), P.X - 5.f, P.Y - 5.f, 10.f, 10.f);
+		DrawRect(LandmarkColour(Mark.Kind), P.X - 4.f, P.Y - 4.f, 8.f, 8.f);
+		if (Mark.Kind == TEXT("hospital"))
+		{
+			DrawRect(FLinearColor(0.85f, 0.05f, 0.05f), P.X - 3.f, P.Y - 1.f, 6.f, 2.f);
+			DrawRect(FLinearColor(0.85f, 0.05f, 0.05f), P.X - 1.f, P.Y - 3.f, 2.f, 6.f);
+		}
+		if ((Mark.Kind == TEXT("station") || Mark.Kind == TEXT("lrt")) && MarkNames < 6)
+		{
+			const FString& MarkName = Mark.Zh.IsEmpty() ? Mark.En : Mark.Zh;
+			float TW = 0.f, TH = 0.f;
+			GetTextSize(MarkName, TW, TH, Font, 0.75f);
+			const float LX = FMath::Clamp((float)P.X + 7.f, X + 2.f, X + W - TW - 2.f);
+			const float LY = FMath::Clamp((float)P.Y - TH * 0.5f, Y + 2.f, Y + H - TH - 2.f);
+			DrawText(MarkName, FLinearColor(0.f, 0.f, 0.f, 0.85f), LX + 1.f, LY + 1.f, Font, 0.75f);
+			DrawText(MarkName, FLinearColor(1.f, 0.92f, 0.8f), LX, LY, Font, 0.75f);
+			Placed.Add(FVector2D(LX + TW * 0.5f, P.Y));
+			++MarkNames;
+		}
+	}
+
 	for (const FCandidate& Candidate : Candidates)
 	{
 		if (Placed.Num() >= 12)
