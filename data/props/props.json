@@ -1,0 +1,6 @@
+{
+  "assets": {
+    "hk_traffic_light": {"height_m": 3.6, "front_yaw_deg": 0},
+    "hk_safe_island": {"height_m": 1.1, "front_yaw_deg": 180}
+  }
+}

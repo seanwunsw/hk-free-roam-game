@@ -14,6 +14,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Builders/CubeBuilder.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
 #include "Components/SkyLightComponent.h"
@@ -651,6 +652,35 @@ AStaticMeshActor* SpawnMeshActor(UWorld* World, UStaticMesh* Mesh, const FVector
 	return Actor;
 }
 
+// One HISM actor per prop asset per tile (tools/pipeline/props.py placements). No collision
+// yet; culled at about 250 m.
+AActor* SpawnPropActor(UWorld* World, UStaticMesh* Mesh, const FVector& Origin, const TArray<FTransform>& Instances, const FString& Label)
+{
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Actor = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform(Origin), Params);
+	if (!Actor)
+	{
+		return nullptr;
+	}
+	UHierarchicalInstancedStaticMeshComponent* Component = NewObject<UHierarchicalInstancedStaticMeshComponent>(Actor, TEXT("Instances"));
+	Component->SetMobility(EComponentMobility::Static);
+	Component->SetStaticMesh(Mesh);
+	Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Component->SetCullDistances(20000, 25000);
+	Actor->SetRootComponent(Component);
+	Actor->AddInstanceComponent(Component);
+	Component->RegisterComponent();
+	Actor->SetActorLocation(Origin);
+	for (const FTransform& Instance : Instances)
+	{
+		Component->AddInstance(Instance);
+	}
+	Actor->SetActorLabel(Label);
+	MarkSpatial(Actor, nullptr, true);
+	return Actor;
+}
+
 void ReadSpawn(const TSharedPtr<FJsonObject>& Object, FHKSpawn& Spawn)
 {
 	Object->TryGetStringField(TEXT("id"), Spawn.Id);
@@ -1162,6 +1192,36 @@ bool UHKBakeLibrary::BakeWorld()
 	FAssetRegistryModule::AssetCreated(Hlod);
 	SaveAsset(Hlod);
 
+	// Street props: data/props/<slug>/*.glb flattened by the pipeline into props/<slug>.glb
+	// (one mesh per asset). Nanite, because the Sketchfab light is 35k triangles and a tile
+	// can hold dozens of instances.
+	UMaterial* PropMat = MakeCustomMaterial(TEXT("M_Prop"), TEXT("return VertColor.rgb;\n"), false, false, false);
+	SaveAsset(PropMat);
+	TMap<FString, UStaticMesh*> PropMeshes;
+	const TSharedPtr<FJsonObject>* PropsObject = nullptr;
+	const TSharedPtr<FJsonObject>* PropAssets = nullptr;
+	if (Manifest->TryGetObjectField(TEXT("props"), PropsObject) && PropsObject && PropsObject->IsValid()
+		&& (*PropsObject)->TryGetObjectField(TEXT("assets"), PropAssets) && PropAssets && PropAssets->IsValid())
+	{
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Entry : (*PropAssets)->Values)
+		{
+			const TSharedPtr<FJsonObject> Asset = Entry.Value.IsValid() ? Entry.Value->AsObject() : nullptr;
+			FString File;
+			if (!Asset || !Asset->TryGetStringField(TEXT("file"), File))
+			{
+				continue;
+			}
+			if (UStaticMesh* Mesh = ImportGlb(FPaths::Combine(Processed, File), FString::Printf(TEXT("SM_Prop_%s"), *Entry.Key), PropMat, TEXT("Prop"), true, EHKMeshCollision::None))
+			{
+				PropMeshes.Add(Entry.Key, Mesh);
+				UE_LOG(LogHK, Display, TEXT("HK props: %s from %s"), *Entry.Key, *File);
+			}
+		}
+	}
+	TMap<FString, int32> SkippedProps;
+	int32 PlacedProps = 0;
+	int32 PropActors = 0;
+
 	const TArray<TSharedPtr<FJsonValue>>* Tiles = nullptr;
 	Manifest->TryGetArrayField(TEXT("tiles"), Tiles);
 	int32 Imported = 0;
@@ -1202,11 +1262,51 @@ bool UHKBakeLibrary::BakeWorld()
 			ImportOne(TEXT("roads"), Road, TEXT("Road"), false, EHKMeshCollision::Road, Hlod);
 			ImportOne(TEXT("water"), WaterMat, TEXT("Water"), false, EHKMeshCollision::None, nullptr);
 			ImportOne(TEXT("rail"), RailMat, TEXT("Rail"), false, EHKMeshCollision::None, Hlod);
+			FString PropsRelative;
+			TSharedPtr<FJsonObject> PropsDoc;
+			const TArray<TSharedPtr<FJsonValue>>* PropItems = nullptr;
+			if (Tile->TryGetStringField(TEXT("props"), PropsRelative) && ReadJson(FPaths::Combine(Processed, PropsRelative), PropsDoc)
+				&& PropsDoc->TryGetArrayField(TEXT("props"), PropItems) && PropItems)
+			{
+				TMap<FString, TArray<FTransform>> ByAsset;
+				for (const TSharedPtr<FJsonValue>& Value : *PropItems)
+				{
+					const TSharedPtr<FJsonObject> Item = Value.IsValid() ? Value->AsObject() : nullptr;
+					FString AssetSlug;
+					if (!Item || !Item->TryGetStringField(TEXT("asset"), AssetSlug))
+					{
+						continue;
+					}
+					// Game yaw is counter-clockwise from east; UE yaw turns +X towards +Y (south).
+					const FVector Location = HKAxes::GameToUnreal(Item->GetNumberField(TEXT("x")), Item->GetNumberField(TEXT("y")), Item->GetNumberField(TEXT("z"))) - Origin;
+					ByAsset.FindOrAdd(AssetSlug).Add(FTransform(FRotator(0.0, -Item->GetNumberField(TEXT("yaw")), 0.0), Location));
+				}
+				for (const TPair<FString, TArray<FTransform>>& Group : ByAsset)
+				{
+					UStaticMesh* const* PropMesh = PropMeshes.Find(Group.Key);
+					if (!PropMesh || !*PropMesh)
+					{
+						SkippedProps.FindOrAdd(Group.Key) += Group.Value.Num();
+						continue;
+					}
+					if (SpawnPropActor(World, *PropMesh, Origin, Group.Value, FString::Printf(TEXT("HKProps_%s_%d_%d"), *Group.Key, Ix, Iy)))
+					{
+						PlacedProps += Group.Value.Num();
+						++PropActors;
+					}
+				}
+			}
 			if (Index > 0 && Index % 250 == 0)
 			{
 				UE_LOG(LogHK, Display, TEXT("Imported %d tile meshes (%d failed)"), Imported, Failed);
 			}
 		}
+	}
+	UE_LOG(LogHK, Display, TEXT("HK props: %d instances in %d HISM actors"), PlacedProps, PropActors);
+	for (const TPair<FString, int32>& Skipped : SkippedProps)
+	{
+		UE_LOG(LogHK, Display, TEXT("HK props: skipped %d %s placements, no mesh (put the GLB in data/props/%s and rerun the pipeline)"),
+			Skipped.Value, *Skipped.Key, *Skipped.Key);
 	}
 	if (GWindingStats.Opposed > 0)
 	{

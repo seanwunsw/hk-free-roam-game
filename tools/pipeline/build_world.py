@@ -42,6 +42,7 @@ from tools.pipeline.glbutil import write_glb
 from tools.pipeline import streetscape
 from tools.pipeline import coast as coastmask
 from tools.pipeline import ground, labels, minimap_tiles
+from tools.pipeline import props as street_props
 from tools.pipeline import rail as railnet
 from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
@@ -263,6 +264,29 @@ def _walk_record(tags, highway: str) -> dict | None:
     return {"highway": highway}
 
 
+def _signal_approaches(way, direction: int, signal_nodes: dict, out: list) -> None:
+    """Traffic arriving at each highway=traffic_signals node of a drivable way: from the
+    previous node (along the way) and from the next (against it), unless the way is one-way
+    or the node's traffic_signals:direction / direction tag picks one side."""
+    refs = way.nodes
+    count = len(refs)
+    for k in range(count):
+        signal = signal_nodes.get(refs[k].ref)
+        if signal is None:
+            continue
+        tag = signal["dir"]
+        try:
+            here = refs[k]
+            if k > 0 and direction >= 0 and tag != "backward":
+                prev = refs[k - 1]
+                out.append({"id": here.ref, "lon": here.lon, "lat": here.lat, "from_lon": prev.lon, "from_lat": prev.lat})
+            if k + 1 < count and direction <= 0 and tag != "forward":
+                nxt = refs[k + 1]
+                out.append({"id": here.ref, "lon": here.lon, "lat": here.lat, "from_lon": nxt.lon, "from_lat": nxt.lat})
+        except Exception:
+            continue
+
+
 def extract_osm(path: Path, log: Log) -> dict:
     import osmium
 
@@ -278,6 +302,10 @@ def extract_osm(path: Path, log: Log) -> dict:
     landmark_items = []
     rivers_ll = []
     rails_ll = []
+    signal_nodes = {}
+    signal_approaches = []
+    island_nodes = []
+    island_ways = []
     seen = 0
     processor = osmium.FileProcessor(str(path)).with_locations().with_areas()
     for obj in processor:
@@ -359,6 +387,10 @@ def extract_osm(path: Path, log: Log) -> dict:
                     line = _way_nodes(obj)
                     if line is not None:
                         rails_ll.append({"ll": line, "kind": railway})
+                if tags.get("traffic_calming") == "island" or tags.get("area:highway") == "traffic_island":
+                    line = _way_nodes(obj)
+                    if line is not None and len(line) >= 3:
+                        island_ways.append(line)
                 if tags.get("waterway") in {"river", "canal"} and (tags.get("name") or tags.get("name:zh") or tags.get("name:en")):
                     line = _way_nodes(obj)
                     if line is not None:
@@ -380,6 +412,8 @@ def extract_osm(path: Path, log: Log) -> dict:
                     if line is None:
                         continue
                     direction = oneway_direction(tags)
+                    if signal_nodes:
+                        _signal_approaches(obj, direction, signal_nodes, signal_approaches)
                     if direction < 0:
                         line = line[::-1].copy()
                     lanes = None
@@ -423,6 +457,15 @@ def extract_osm(path: Path, log: Log) -> dict:
                     zh, en = labels.split_names(tags)
                     if zh or en:
                         place_nodes.append({"zh": zh, "en": en, "kind": tags.get("place"), "lon": obj.location.lon, "lat": obj.location.lat})
+                if len(tags) and obj.location.valid():
+                    if tags.get("highway") == "traffic_signals":
+                        signal_nodes[obj.id] = {
+                            "lon": obj.location.lon,
+                            "lat": obj.location.lat,
+                            "dir": tags.get("traffic_signals:direction") or tags.get("direction"),
+                        }
+                    if tags.get("crossing:island") == "yes" or tags.get("traffic_calming") == "island":
+                        island_nodes.append({"lon": obj.location.lon, "lat": obj.location.lat})
                 landmark = labels.landmark_kind(tags) if len(tags) else None
                 if landmark and obj.location.valid():
                     zh, en = labels.split_names(tags)
@@ -435,7 +478,8 @@ def extract_osm(path: Path, log: Log) -> dict:
         f"water {len(waters_ll)}  coast {len(coasts)}  walkways {len(walks)}  "
         f"one-way roads {sum(1 for r in roads if r['oneway'])}  named roads {sum(1 for r in roads if r['name_zh'] or r['name_en'])}  "
         f"place nodes {len(place_nodes)}  districts {len(districts_ll)}  landuse areas {len(landuse_ll)}  "
-        f"landmarks {len(landmark_items)}  rivers {len(rivers_ll)}  at-grade rail ways {len(rails_ll)}"
+        f"landmarks {len(landmark_items)}  rivers {len(rivers_ll)}  at-grade rail ways {len(rails_ll)}  "
+        f"signal nodes {len(signal_nodes)}  signal approaches {len(signal_approaches)}  island nodes {len(island_nodes)}  island ways {len(island_ways)}"
     )
     return {
         "buildings_ll": buildings_ll,
@@ -450,6 +494,9 @@ def extract_osm(path: Path, log: Log) -> dict:
         "landmark_items": landmark_items,
         "rivers_ll": rivers_ll,
         "rails_ll": rails_ll,
+        "signal_approaches": signal_approaches,
+        "island_nodes": island_nodes,
+        "island_ways": island_ways,
     }
 
 
@@ -1956,6 +2003,20 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
     }
     log(f"spawn lanes {json.dumps(road_stats['spawn_lanes'])}")
     minimap = _draw_minimap(out / "minimap.png", height, landscape, roads, landmarks["places"], is_land, waters)
+    prop_assets = street_props.prepare_assets(root, out, log)
+    prop_list, prop_stats = street_props.place(warp, extracted, roads, bounds, log)
+    prop_files = street_props.write_tiles(tile_dir, prop_list, landscape, tile)
+    tile_records = {(record["ix"], record["iy"]): record for record in mesh_info["tiles"]}
+    for (ix, iy), relative in sorted(prop_files.items()):
+        record = tile_records.get((ix, iy))
+        if record is None:
+            record = {"ix": ix, "iy": iy, "origin_x_m": landscape["min_x"] + ix * tile, "origin_y_m": landscape["min_y"] + iy * tile}
+            mesh_info["tiles"].append(record)
+        record["props"] = relative
+    player = spawns["player"]
+    tuen_mun = street_props.count_in_box(prop_list, (player["x_m"] - 3000.0, player["y_m"] - 3000.0, player["x_m"] + 3000.0, player["y_m"] + 3000.0))
+    prop_summary = {"assets": prop_assets, "placed": prop_stats, "tiles": len(prop_files), "near_tuen_mun_spawn_6km_box": tuen_mun}
+    log(f"props {json.dumps(prop_summary)}")
     names_doc = labels.build(
         roads,
         labels.place_points(warp, extracted.get("place_nodes", []), bounds),
@@ -2004,6 +2065,7 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         "road_names": names_doc,
         "minimap_tiles": local_map,
         "ground": ground_grid,
+        "props": prop_summary,
         "notes": notes,
         "counts": {
             "osm_buildings": len(extracted["buildings_ll"]),
@@ -2073,6 +2135,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "road_names_file": "road_names.json",
         "minimap_tiles": built["minimap_tiles"],
         "ground_texture": built["ground"],
+        "props": {"assets": built["props"]["assets"], "tiles": built["props"]["tiles"]},
         "warp_lut": "warp_lut.bin",
     }
     (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -2088,6 +2151,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         "ground_texture": {k: built["ground"][k] for k in ("file", "width_px", "height_px", "m_per_px_x", "m_per_px_y", "areas", "by_key", "bytes")},
         "minimap_tiles": {k: built["minimap_tiles"][k] for k in ("tiles", "nx", "ny", "px", "tile_m", "bytes")},
         "rail": built["road_heights"]["visuals"].get("rail"),
+        "props": built["props"],
         "harbour_game_width_m": {
             "sections": len(widths),
             "min": min_harbour,

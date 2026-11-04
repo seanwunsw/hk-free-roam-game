@@ -537,8 +537,10 @@ void AHKFreeRoamHUD::DrawHelp()
 		TEXT("直升機  滑鼠週期變距  A D 偏航  E Q 總距  H 懸停"),
 		TEXT("方向鍵或 I J K L 係直升機後備操控"),
 		TEXT("M 地圖，撳地圖傳送    N 小地圖：近距 1 km／全港    F9 切換畫質"),
-		TEXT("Ctrl+1 至 0 傳送到地區    控制台 HK.Go 名稱")};
-	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.62f), 16.f, 16.f, 760.f, 176.f);
+		TEXT("Ctrl+1 至 0 傳送到地區    控制台 HK.Go 名稱"),
+		TEXT("地圖資料 © OpenStreetMap contributors (ODbL)"),
+		TEXT("3D 模型：\"Hong Kong Safe Island\"、\"Hong Kong Traffic Light\" by businessyuen (Sketchfab, CC BY 4.0)")};
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.62f), 16.f, 16.f, 900.f, 212.f);
 	for (int32 Line = 0; Line < UE_ARRAY_COUNT(Lines); ++Line)
 	{
 		DrawText(Lines[Line], FLinearColor(0.94f, 0.94f, 0.9f), 26.f, 24.f + Line * 18.f, GEngine->GetSmallFont(), 1.05f);
