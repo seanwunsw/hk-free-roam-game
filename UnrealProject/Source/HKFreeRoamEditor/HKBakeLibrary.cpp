@@ -14,6 +14,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Builders/CubeBuilder.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
 #include "Components/SkyLightComponent.h"
@@ -31,6 +32,8 @@
 #include "GameFramework/PhysicsVolume.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameMapsSettings.h"
+#include "ImageCore.h"
+#include "ImageUtils.h"
 #include "Landscape.h"
 #include "LandscapeInfo.h"
 #include "Materials/Material.h"
@@ -38,6 +41,7 @@
 #include "Materials/MaterialExpressionConstant3Vector.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
+#include "Materials/MaterialExpressionTextureObject.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
@@ -71,6 +75,8 @@ struct FHKSpawn
 	double Y = 0.0;
 	double Z = 0.0;
 	double Yaw = 0.0;
+	// Cars only: nose-up degrees so all four wheels rest on a sloped road.
+	double Pitch = 0.0;
 };
 
 enum class EHKMeshCollision : uint8
@@ -150,7 +156,7 @@ UMaterial* FinishMaterial(UMaterial* Material)
 	return Material;
 }
 
-UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool bNanite, bool bTranslucent, bool bWorldPos)
+UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool bNanite, bool bTranslucent, bool bWorldPos, bool bUV1 = false, UTexture* Texture = nullptr)
 {
 	const FString PackageName = FString::Printf(TEXT("/Game/HK/Materials/%s"), AssetName);
 	UPackage* Package = CreatePackage(*PackageName);
@@ -168,26 +174,54 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	Custom->OutputType = CMOT_Float3;
 	Custom->Description = AssetName;
 	Custom->Code = Code;
-	// The constructor adds one unnamed input. Clear it so Inputs[0..2] are UV, VertColor, WorldPos.
+	// The constructor adds one unnamed input. Clear it so the inputs are UV, VertColor, VertAlpha,
+	// then the optional WorldPos and UV1.
 	Custom->Inputs.Reset();
 	FCustomInput& UV = Custom->Inputs.AddDefaulted_GetRef();
 	UV.InputName = TEXT("UV");
 	FCustomInput& Color = Custom->Inputs.AddDefaulted_GetRef();
 	Color.InputName = TEXT("VertColor");
+	FCustomInput& Alpha = Custom->Inputs.AddDefaulted_GetRef();
+	Alpha.InputName = TEXT("VertAlpha");
 	UMaterialExpressionTextureCoordinate* TexCoord = NewObject<UMaterialExpressionTextureCoordinate>(Material);
 	UMaterialExpressionVertexColor* VertColor = NewObject<UMaterialExpressionVertexColor>(Material);
 	AddExpression(Material, Custom);
 	AddExpression(Material, TexCoord);
 	AddExpression(Material, VertColor);
 	Custom->Inputs[0].Input.Connect(0, TexCoord);
+	// UMaterialExpressionVertexColor outputs are RGB (float3, mask RGB), R, G, B, A. Output 0 has
+	// no alpha: M_Facade read VertColor.a and failed on PCD3D_SM6 ("vector swizzle 'a' is out of
+	// bounds"), so every building drew with the default WorldGridMaterial. Alpha is output 4.
 	Custom->Inputs[1].Input.Connect(0, VertColor);
+	Custom->Inputs[2].Input.Connect(4, VertColor);
 	if (bWorldPos)
 	{
 		FCustomInput& WorldIn = Custom->Inputs.AddDefaulted_GetRef();
 		WorldIn.InputName = TEXT("WorldPos");
 		UMaterialExpressionWorldPosition* World = NewObject<UMaterialExpressionWorldPosition>(Material);
 		AddExpression(Material, World);
-		Custom->Inputs[2].Input.Connect(0, World);
+		Custom->Inputs.Last().Input.Connect(0, World);
+	}
+	if (bUV1)
+	{
+		// Road meshes carry (ribbon width, lane marking code) in UV channel 1.
+		FCustomInput& Uv1In = Custom->Inputs.AddDefaulted_GetRef();
+		Uv1In.InputName = TEXT("UV1");
+		UMaterialExpressionTextureCoordinate* TexCoord1 = NewObject<UMaterialExpressionTextureCoordinate>(Material);
+		TexCoord1->CoordinateIndex = 1;
+		AddExpression(Material, TexCoord1);
+		Custom->Inputs.Last().Input.Connect(0, TexCoord1);
+	}
+	if (Texture)
+	{
+		// A texture object input named GroundTex gives the HLSL GroundTex and GroundTexSampler.
+		FCustomInput& TexIn = Custom->Inputs.AddDefaulted_GetRef();
+		TexIn.InputName = TEXT("GroundTex");
+		UMaterialExpressionTextureObject* Object = NewObject<UMaterialExpressionTextureObject>(Material);
+		Object->Texture = Texture;
+		Object->SamplerType = SAMPLERTYPE_Color;
+		AddExpression(Material, Object);
+		Custom->Inputs.Last().Input.Connect(0, Object);
 	}
 	UMaterialExpressionConstant* Rough = NewObject<UMaterialExpressionConstant>(Material);
 	Rough->R = bTranslucent ? 0.15f : 0.75f;
@@ -206,6 +240,34 @@ UMaterial* MakeCustomMaterial(const TCHAR* AssetName, const FString& Code, bool 
 	}
 	// Landscape materials need no EMaterialUsage flag; there is no MATUSAGE_Landscape.
 	return FinishMaterial(Material);
+}
+
+// data/processed/ground_color.png (tools/pipeline/ground.py) as /Game/HK/Textures/T_Ground:
+// 4096 px over the landscape, row 0 at the north edge, sRGB, clamped.
+UTexture2D* ImportGroundTexture(const FString& Path)
+{
+	FImage Image;
+	if (!FImageUtils::LoadImage(*Path, Image))
+	{
+		UE_LOG(LogHK, Warning, TEXT("Ground colour %s was not loaded; M_Terrain falls back to height bands"), *Path);
+		return nullptr;
+	}
+	const TCHAR* AssetName = TEXT("T_Ground");
+	UPackage* Package = CreatePackage(TEXT("/Game/HK/Textures/T_Ground"));
+	ReplaceObject(Package, AssetName, UTexture2D::StaticClass());
+	UTexture2D* Texture = NewObject<UTexture2D>(Package, AssetName, RF_Public | RF_Standalone);
+	Texture->Source.Init(Image);
+	Texture->SRGB = true;
+	Texture->AddressX = TA_Clamp;
+	Texture->AddressY = TA_Clamp;
+	Texture->LODGroup = TEXTUREGROUP_World;
+	Texture->CompressionSettings = TC_Default;
+	Texture->MipGenSettings = TMGS_FromTextureGroup;
+	Texture->PostEditChange();
+	FAssetRegistryModule::AssetCreated(Texture);
+	SaveAsset(Texture);
+	UE_LOG(LogHK, Display, TEXT("Ground colour %dx%d imported from %s"), Image.SizeX, Image.SizeY, *Path);
+	return Texture;
 }
 
 UMaterial* MakeCarMaterial()
@@ -368,6 +430,10 @@ UStaticMesh* BuildMesh(
 		Model.BuildSettings.bRecomputeNormals = false;
 		Model.BuildSettings.bRecomputeTangents = true;
 		Model.BuildSettings.DistanceFieldResolutionScale = 0.25f;
+		// UV channel 1 carries road lane data. Generated lightmap UVs would overwrite it, and
+		// half-precision UVs cannot hold arc lengths of kilometres (uv.x is metres along).
+		Model.BuildSettings.bGenerateLightmapUVs = false;
+		Model.BuildSettings.bUseFullPrecisionUVs = true;
 	}
 	// 5.6 and 5.8 both have Build(const FBuildParameters&) and Build(bool, TArray<FText>*). One argument does not match either.
 	Mesh->Build(true, nullptr);
@@ -436,6 +502,10 @@ bool AppendPrim(FMeshDescription& Mesh, FStaticMeshAttributes& Attributes, FPoly
 		}
 		Normals[Instance] = Normal;
 		UVs.Set(Instance, 0, Prim.UVs[Index]);
+		if (UVs.GetNumChannels() > 1)
+		{
+			UVs.Set(Instance, 1, Prim.UV1s.Num() == Count ? Prim.UV1s[Index] : FVector2f::ZeroVector);
+		}
 		Colors[Instance] = Prim.Colors[Index];
 		Instances[Index] = Instance;
 		Box += FVector(Position);
@@ -540,7 +610,8 @@ UStaticMesh* ImportGlb(const FString& GlbPath, const FString& AssetName, UMateri
 	FMeshDescription Description;
 	FStaticMeshAttributes Attributes(Description);
 	Attributes.Register();
-	Attributes.GetVertexInstanceUVs().SetNumChannels(1);
+	// Channel 0: metres along / across. Channel 1: road width and lane marking code (zero elsewhere).
+	Attributes.GetVertexInstanceUVs().SetNumChannels(2);
 	const FPolygonGroupID Group = Description.CreatePolygonGroup();
 	Attributes.GetPolygonGroupMaterialSlotNames()[Group] = Slot;
 	TArray<FKConvexElem> Hulls;
@@ -581,6 +652,35 @@ AStaticMeshActor* SpawnMeshActor(UWorld* World, UStaticMesh* Mesh, const FVector
 	return Actor;
 }
 
+// One HISM actor per prop asset per tile (tools/pipeline/props.py placements). No collision
+// yet; culled at about 250 m.
+AActor* SpawnPropActor(UWorld* World, UStaticMesh* Mesh, const FVector& Origin, const TArray<FTransform>& Instances, const FString& Label)
+{
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Actor = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform(Origin), Params);
+	if (!Actor)
+	{
+		return nullptr;
+	}
+	UHierarchicalInstancedStaticMeshComponent* Component = NewObject<UHierarchicalInstancedStaticMeshComponent>(Actor, TEXT("Instances"));
+	Component->SetMobility(EComponentMobility::Static);
+	Component->SetStaticMesh(Mesh);
+	Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Component->SetCullDistances(20000, 25000);
+	Actor->SetRootComponent(Component);
+	Actor->AddInstanceComponent(Component);
+	Component->RegisterComponent();
+	Actor->SetActorLocation(Origin);
+	for (const FTransform& Instance : Instances)
+	{
+		Component->AddInstance(Instance);
+	}
+	Actor->SetActorLabel(Label);
+	MarkSpatial(Actor, nullptr, true);
+	return Actor;
+}
+
 void ReadSpawn(const TSharedPtr<FJsonObject>& Object, FHKSpawn& Spawn)
 {
 	Object->TryGetStringField(TEXT("id"), Spawn.Id);
@@ -588,6 +688,7 @@ void ReadSpawn(const TSharedPtr<FJsonObject>& Object, FHKSpawn& Spawn)
 	Object->TryGetNumberField(TEXT("y_m"), Spawn.Y);
 	Object->TryGetNumberField(TEXT("z_m"), Spawn.Z);
 	Object->TryGetNumberField(TEXT("yaw_deg"), Spawn.Yaw);
+	Object->TryGetNumberField(TEXT("pitch_deg"), Spawn.Pitch);
 }
 
 void ReadSpawnArray(const TSharedPtr<FJsonObject>& Root, const TCHAR* Field, TArray<FHKSpawn>& Out)
@@ -613,7 +714,8 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	FMeshDescription Description;
 	FStaticMeshAttributes Attributes(Description);
 	Attributes.Register();
-	Attributes.GetVertexInstanceUVs().SetNumChannels(1);
+	// Channel 0: metres along / across. Channel 1: road width and lane marking code (zero elsewhere).
+	Attributes.GetVertexInstanceUVs().SetNumChannels(2);
 	const FPolygonGroupID Group = Description.CreatePolygonGroup();
 	Attributes.GetPolygonGroupMaterialSlotNames()[Group] = TEXT("Body");
 	TVertexAttributesRef<FVector3f> Positions = Attributes.GetVertexPositions();
@@ -631,8 +733,11 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	};
 	auto Face = [&](const FVector3f& A, const FVector3f& B, const FVector3f& C, const FVector3f& D, const FVector3f& Normal)
 	{
-		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(B, Normal, FVector2f(1, 0)), Vertex(C, Normal, FVector2f(1, 1)));
-		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(C, Normal, FVector2f(1, 1)), Vertex(D, Normal, FVector2f(0, 1)));
+		// The corners below are listed counter-clockwise seen from outside. UE's face normal is
+		// Cross(P2 - P0, P1 - P0) (see AppendPrim), so emit them reversed or every face points in
+		// and the body renders inside out.
+		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(C, Normal, FVector2f(1, 1)), Vertex(B, Normal, FVector2f(1, 0)));
+		AddTriangle(Description, Group, Vertex(A, Normal, FVector2f(0, 0)), Vertex(D, Normal, FVector2f(0, 1)), Vertex(C, Normal, FVector2f(1, 1)));
 	};
 	const FVector3f Min(-215.f, -95.f, 20.f);
 	const FVector3f Max(215.f, 95.f, 90.f);
@@ -658,6 +763,13 @@ bool BuildChassis(UMaterialInterface* Material, USkeletalMesh*& OutMesh, UPhysic
 	{
 		FReferenceSkeletonModifier Modifier(Skeleton);
 		Modifier.Add(FMeshBoneInfo(TEXT("Root"), TEXT("Root"), INDEX_NONE), FTransform::Identity);
+		// One bone per wheel, at the origin; AHKCar's AdditionalOffset places each wheel. Chaos
+		// switches off simulation and collision on the physics body of every wheel bone, so the
+		// wheels must not share Root, the bone that carries the chassis body.
+		for (const FName& WheelBone : AHKCar::WheelBoneNames())
+		{
+			Modifier.Add(FMeshBoneInfo(WheelBone, WheelBone.ToString(), 0), FTransform::Identity);
+		}
 	}
 	if (Skeleton->GetReferenceSkeleton().GetNum() <= 0)
 	{
@@ -911,20 +1023,105 @@ bool UHKBakeLibrary::BakeWorld()
 
 	UMaterial* Facade = MakeCustomMaterial(
 		TEXT("M_Facade"),
-		TEXT("float roof = step(0.5, VertColor.a);\nfloat wx = frac(UV.x * 0.42);\nfloat wy = frac(UV.y * 0.50);\nfloat window = step(0.16, wx) * step(wx, 0.84) * step(0.12, wy) * step(wy, 0.82);\nfloat3 tint = VertColor.rgb;\nfloat3 wall = tint * lerp(0.45, 0.72, wy);\nfloat3 glass = tint * 0.12 + float3(0.04, 0.06, 0.08);\nfloat3 facade = lerp(wall, glass, window);\nreturn lerp(facade, tint * float3(0.32, 0.31, 0.30), roof);\n"),
+		TEXT("float roof = step(0.5, VertAlpha);\n")
+			TEXT("float wx = frac(UV.x * 0.42);\n")
+			TEXT("float wy = frac(UV.y * 0.50);\n")
+			TEXT("float window = step(0.18, wx) * step(wx, 0.82) * step(0.18, wy) * step(wy, 0.78);\n")
+			TEXT("float3 tint = VertColor.rgb;\n")
+			TEXT("float band = step(0.90, wy);\n")
+			TEXT("float3 wall = tint * lerp(0.78, 0.96, wy) * (1.0 - 0.12 * band);\n")
+			TEXT("float3 glass = tint * 0.14 + float3(0.05, 0.07, 0.09);\n")
+			TEXT("float3 facade = lerp(wall, glass, window);\n")
+			TEXT("float3 roofc = lerp(float3(0.52, 0.52, 0.50), tint, 0.25);\n")
+			TEXT("return lerp(facade, roofc, roof);\n"),
 		true, false, false);
+	// Road, junction fill, pavement and walkway prims share this material.
+	// UV: metres along, metres from the left edge. UV1: ribbon width, marking code
+	// (split metres + 64 * lanes left + 1024 * lanes right). VertColor: R markings on,
+	// G pavement concrete, B steps. HK style: yellow edge lines, white dashed lane lines,
+	// double white centre line only where both directions share the ribbon.
 	UMaterial* Road = MakeCustomMaterial(
 		TEXT("M_Road"),
-		TEXT("float edge = saturate(step(UV.y, 0.08) + step(0.92, UV.y));\nfloat dash = step(0.45, frac(UV.x * 0.12));\nfloat center = step(0.46, UV.y) * step(UV.y, 0.54) * dash;\nfloat3 asphalt = float3(0.09, 0.09, 0.095);\nfloat3 paint = float3(0.85, 0.80, 0.45);\nreturn lerp(asphalt, paint, saturate(edge + center));\n"),
-		true, false, false);
+		TEXT("float W = max(UV1.x, 0.01);\n")
+			TEXT("float code = UV1.y;\n")
+			TEXT("float blk = floor(code / 64.0);\n")
+			TEXT("float ll = fmod(blk, 16.0);\n")
+			TEXT("float lr = floor(code / 1024.0);\n")
+			TEXT("float s = code - 64.0 * blk;\n")
+			TEXT("float y = UV.y;\n")
+			TEXT("float along = UV.x;\n")
+			TEXT("float mark = step(0.5, VertColor.r);\n")
+			TEXT("float pave = step(0.5, VertColor.g);\n")
+			TEXT("float stair = step(0.5, VertColor.b);\n")
+			TEXT("float edge = (step(0.25, y) * step(y, 0.37) + step(W - 0.37, y) * step(y, W - 0.25)) * step(1.5, W);\n")
+			TEXT("float dash = step(frac(along / 8.0), 0.44);\n")
+			TEXT("float div = 0.0;\n")
+			TEXT("if (ll > 1.5 && y < s)\n")
+			TEXT("{\n")
+			TEXT("\tfloat lw = s / ll;\n")
+			TEXT("\tfloat k = round(y / lw);\n")
+			TEXT("\tdiv = step(abs(y - k * lw), 0.05) * step(0.5, k) * step(k, ll - 0.5);\n")
+			TEXT("}\n")
+			TEXT("if (lr > 1.5 && y > s)\n")
+			TEXT("{\n")
+			TEXT("\tfloat rw = (W - s) / lr;\n")
+			TEXT("\tfloat k = round((y - s) / rw);\n")
+			TEXT("\tdiv = max(div, step(abs(y - s - k * rw), 0.05) * step(0.5, k) * step(k, lr - 0.5));\n")
+			TEXT("}\n")
+			TEXT("float centre = step(0.5, ll) * step(0.5, lr) * step(abs(abs(y - s) - 0.15), 0.05);\n")
+			TEXT("float3 asphalt = float3(0.085, 0.085, 0.09);\n")
+			TEXT("float3 white = float3(0.80, 0.80, 0.78);\n")
+			TEXT("float3 yellow = float3(0.78, 0.60, 0.12);\n")
+			TEXT("float3 c = lerp(asphalt, yellow, edge * mark);\n")
+			TEXT("c = lerp(c, white, saturate(div * dash + centre) * mark);\n")
+			TEXT("float joint = saturate(step(frac(along / 1.2), 0.04) + step(frac(y / 1.2), 0.04));\n")
+			TEXT("float3 concrete = float3(0.42, 0.41, 0.39) * (1.0 - 0.25 * joint);\n")
+			TEXT("float tread = step(0.5, frac(along / 0.6));\n")
+			TEXT("concrete = lerp(concrete, concrete * lerp(0.75, 1.05, tread), stair);\n")
+			TEXT("return lerp(c, concrete, pave);\n"),
+		true, false, false, true);
 	UMaterial* WaterMat = MakeCustomMaterial(
 		TEXT("M_Water"),
 		TEXT("return float3(0.04, 0.16, 0.24);\n"),
 		false, true, false);
-	UMaterial* Terrain = MakeCustomMaterial(
-		TEXT("M_Terrain"),
-		TEXT("float h = saturate(WorldPos.z / 18000.0);\nfloat3 low = float3(0.15, 0.28, 0.13);\nfloat3 high = float3(0.42, 0.40, 0.34);\nreturn lerp(low, high, h);\n"),
-		false, false, true);
+	// Landuse, parks, woods and water from OSM, sampled by world XY (cm, UE Y = -game Y).
+	UTexture2D* GroundTexture = nullptr;
+	double GroundMinX = 0, GroundMaxX = 1, GroundMinY = 0, GroundMaxY = 1;
+	const TSharedPtr<FJsonObject>* GroundObject = nullptr;
+	if (Manifest->TryGetObjectField(TEXT("ground_texture"), GroundObject) && GroundObject && GroundObject->IsValid())
+	{
+		FString GroundFile;
+		(*GroundObject)->TryGetStringField(TEXT("file"), GroundFile);
+		(*GroundObject)->TryGetNumberField(TEXT("min_x_m"), GroundMinX);
+		(*GroundObject)->TryGetNumberField(TEXT("max_x_m"), GroundMaxX);
+		(*GroundObject)->TryGetNumberField(TEXT("min_y_m"), GroundMinY);
+		(*GroundObject)->TryGetNumberField(TEXT("max_y_m"), GroundMaxY);
+		if (!GroundFile.IsEmpty())
+		{
+			GroundTexture = ImportGroundTexture(FPaths::Combine(Processed, GroundFile));
+		}
+	}
+	const FString TerrainCode = GroundTexture
+		? FString::Printf(
+			TEXT("float2 uv = float2((WorldPos.x * 0.01 - (%.3f)) / %.3f, ((%.3f) + WorldPos.y * 0.01) / %.3f);\n")
+			TEXT("float3 c = Texture2DSample(GroundTex, GroundTexSampler, uv).rgb;\n")
+			TEXT("float h = saturate(WorldPos.z / 60000.0);\n")
+			TEXT("return c * lerp(1.0, 0.88, h);\n"),
+			GroundMinX, FMath::Max(GroundMaxX - GroundMinX, 1.0), GroundMaxY, FMath::Max(GroundMaxY - GroundMinY, 1.0))
+		: FString(TEXT("float h = saturate(WorldPos.z / 18000.0);\nfloat3 low = float3(0.15, 0.28, 0.13);\nfloat3 high = float3(0.42, 0.40, 0.34);\nreturn lerp(low, high, h);\n"));
+	UMaterial* Terrain = MakeCustomMaterial(TEXT("M_Terrain"), TerrainCode, false, false, true, false, GroundTexture);
+	// At-grade Light Rail and rail strips (tools/pipeline/rail.py): UV.x metres along, UV.y
+	// metres across a 3 m strip. Ballast, sleepers every 0.65 m, two rails 1.435 m apart.
+	UMaterial* RailMat = MakeCustomMaterial(
+		TEXT("M_Rail"),
+		TEXT("float y = UV.y;\n")
+			TEXT("float along = UV.x;\n")
+			TEXT("float3 c = float3(0.20, 0.18, 0.16);\n")
+			TEXT("float sleeper = step(frac(along / 0.65), 0.32) * step(0.35, y) * step(y, 2.65);\n")
+			TEXT("c = lerp(c, float3(0.30, 0.26, 0.22), sleeper);\n")
+			TEXT("float rail = saturate(step(abs(y - 0.78), 0.04) + step(abs(y - 2.22), 0.04));\n")
+			TEXT("return lerp(c, float3(0.62, 0.62, 0.64), rail);\n"),
+		false, false, false);
 	UMaterial* CarMat = MakeCarMaterial();
 	UMaterial* PadMat = MakeCustomMaterial(
 		TEXT("M_Helipad"),
@@ -938,6 +1135,7 @@ bool UHKBakeLibrary::BakeWorld()
 	SaveAsset(Road);
 	SaveAsset(WaterMat);
 	SaveAsset(Terrain);
+	SaveAsset(RailMat);
 	SaveAsset(CarMat);
 	SaveAsset(PadMat);
 	SaveAsset(HeliMat);
@@ -994,6 +1192,36 @@ bool UHKBakeLibrary::BakeWorld()
 	FAssetRegistryModule::AssetCreated(Hlod);
 	SaveAsset(Hlod);
 
+	// Street props: data/props/<slug>/*.glb flattened by the pipeline into props/<slug>.glb
+	// (one mesh per asset). Nanite, because the Sketchfab light is 35k triangles and a tile
+	// can hold dozens of instances.
+	UMaterial* PropMat = MakeCustomMaterial(TEXT("M_Prop"), TEXT("return VertColor.rgb;\n"), false, false, false);
+	SaveAsset(PropMat);
+	TMap<FString, UStaticMesh*> PropMeshes;
+	const TSharedPtr<FJsonObject>* PropsObject = nullptr;
+	const TSharedPtr<FJsonObject>* PropAssets = nullptr;
+	if (Manifest->TryGetObjectField(TEXT("props"), PropsObject) && PropsObject && PropsObject->IsValid()
+		&& (*PropsObject)->TryGetObjectField(TEXT("assets"), PropAssets) && PropAssets && PropAssets->IsValid())
+	{
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Entry : (*PropAssets)->Values)
+		{
+			const TSharedPtr<FJsonObject> Asset = Entry.Value.IsValid() ? Entry.Value->AsObject() : nullptr;
+			FString File;
+			if (!Asset || !Asset->TryGetStringField(TEXT("file"), File))
+			{
+				continue;
+			}
+			if (UStaticMesh* Mesh = ImportGlb(FPaths::Combine(Processed, File), FString::Printf(TEXT("SM_Prop_%s"), *Entry.Key), PropMat, TEXT("Prop"), true, EHKMeshCollision::None))
+			{
+				PropMeshes.Add(Entry.Key, Mesh);
+				UE_LOG(LogHK, Display, TEXT("HK props: %s from %s"), *Entry.Key, *File);
+			}
+		}
+	}
+	TMap<FString, int32> SkippedProps;
+	int32 PlacedProps = 0;
+	int32 PropActors = 0;
+
 	const TArray<TSharedPtr<FJsonValue>>* Tiles = nullptr;
 	Manifest->TryGetArrayField(TEXT("tiles"), Tiles);
 	int32 Imported = 0;
@@ -1033,11 +1261,52 @@ bool UHKBakeLibrary::BakeWorld()
 			// collision comes from that fallback too, which tilted the flat ribbons and made the player slide.
 			ImportOne(TEXT("roads"), Road, TEXT("Road"), false, EHKMeshCollision::Road, Hlod);
 			ImportOne(TEXT("water"), WaterMat, TEXT("Water"), false, EHKMeshCollision::None, nullptr);
+			ImportOne(TEXT("rail"), RailMat, TEXT("Rail"), false, EHKMeshCollision::None, Hlod);
+			FString PropsRelative;
+			TSharedPtr<FJsonObject> PropsDoc;
+			const TArray<TSharedPtr<FJsonValue>>* PropItems = nullptr;
+			if (Tile->TryGetStringField(TEXT("props"), PropsRelative) && ReadJson(FPaths::Combine(Processed, PropsRelative), PropsDoc)
+				&& PropsDoc->TryGetArrayField(TEXT("props"), PropItems) && PropItems)
+			{
+				TMap<FString, TArray<FTransform>> ByAsset;
+				for (const TSharedPtr<FJsonValue>& Value : *PropItems)
+				{
+					const TSharedPtr<FJsonObject> Item = Value.IsValid() ? Value->AsObject() : nullptr;
+					FString AssetSlug;
+					if (!Item || !Item->TryGetStringField(TEXT("asset"), AssetSlug))
+					{
+						continue;
+					}
+					// Game yaw is counter-clockwise from east; UE yaw turns +X towards +Y (south).
+					const FVector Location = HKAxes::GameToUnreal(Item->GetNumberField(TEXT("x")), Item->GetNumberField(TEXT("y")), Item->GetNumberField(TEXT("z"))) - Origin;
+					ByAsset.FindOrAdd(AssetSlug).Add(FTransform(FRotator(0.0, -Item->GetNumberField(TEXT("yaw")), 0.0), Location));
+				}
+				for (const TPair<FString, TArray<FTransform>>& Group : ByAsset)
+				{
+					UStaticMesh* const* PropMesh = PropMeshes.Find(Group.Key);
+					if (!PropMesh || !*PropMesh)
+					{
+						SkippedProps.FindOrAdd(Group.Key) += Group.Value.Num();
+						continue;
+					}
+					if (SpawnPropActor(World, *PropMesh, Origin, Group.Value, FString::Printf(TEXT("HKProps_%s_%d_%d"), *Group.Key, Ix, Iy)))
+					{
+						PlacedProps += Group.Value.Num();
+						++PropActors;
+					}
+				}
+			}
 			if (Index > 0 && Index % 250 == 0)
 			{
 				UE_LOG(LogHK, Display, TEXT("Imported %d tile meshes (%d failed)"), Imported, Failed);
 			}
 		}
+	}
+	UE_LOG(LogHK, Display, TEXT("HK props: %d instances in %d HISM actors"), PlacedProps, PropActors);
+	for (const TPair<FString, int32>& Skipped : SkippedProps)
+	{
+		UE_LOG(LogHK, Display, TEXT("HK props: skipped %d %s placements, no mesh (put the GLB in data/props/%s and rerun the pipeline)"),
+			Skipped.Value, *Skipped.Key, *Skipped.Key);
 	}
 	if (GWindingStats.Opposed > 0)
 	{
@@ -1128,8 +1397,11 @@ bool UHKBakeLibrary::BakeWorld()
 	for (const FHKSpawn& Car : Cars)
 	{
 		AHKCar* Actor = World->SpawnActor<AHKCar>(
-			HKAxes::GameToUnreal(Car.X, Car.Y, Car.Z) + FVector(0.0, 0.0, 100.0),
-			FRotator(0.f, HKAxes::GameYawToUnreal(Car.Yaw), 0.f), Params);
+			// z_m is already the wheel contact plane (the actor origin) resting on the road plus
+			// 2 cm, pitched to the slope. The old +1 m lift left parked cars hanging in the air:
+			// before the chassis simulated nothing pulled them down, and now they would drop 1 m.
+			HKAxes::GameToUnreal(Car.X, Car.Y, Car.Z),
+			FRotator(Car.Pitch, HKAxes::GameYawToUnreal(Car.Yaw), 0.f), Params);
 		if (!Actor)
 		{
 			continue;

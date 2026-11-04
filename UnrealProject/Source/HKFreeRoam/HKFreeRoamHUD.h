@@ -20,13 +20,23 @@ public:
 
 private:
 	void DrawMap(float X, float Y, float W, float H, bool bFull);
+	void DrawLocalMap(float X, float Y, float W, float H);
 	void DrawHelp();
 	void DrawReadout();
 	void UpdateStreaming();
+	void UpdateLabels();
+	void DrawStreetName();
 
 	float SmoothedFps = 60.f;
 	float StreamTimer = 0.f;
 	int32 LoadedSpatialActors = 0;
 	bool bStreamingComplete = true;
+	int32 CountTick = 0;
 	bool bHasWorldPartition = false;
+
+	float LabelTimer = 0.f;
+	FString StreetZh;
+	FString StreetEn;
+	FString AreaText;
+	FString LandmarkText;
 };

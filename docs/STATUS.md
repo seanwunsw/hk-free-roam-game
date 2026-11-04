@@ -73,7 +73,7 @@ C++ 原本係對住 UE 5.6 公開 API 寫，而家目標係 UE 5.8（見下面�
 
 ### 仍然未處理（Minor）
 
-1. 懸掛 `SpringRate` 45000 可能太硬
+1. 懸掛 `SpringRate`：45000 改咗做 600（2026-11-03，疑似 spawn 反轉原因，**未驗證**，未喺 PIE 試過）
 2. 傳送只 trace 到 Landscape，未等建築／路串流
 3. 單一 Landscape actor（2112 components，冇 streaming proxy）
 4. `GConfig` 寫 `DefaultEngine.ini` 可能寫唔入（startup map）
@@ -419,3 +419,49 @@ SM6 目標同路面非 Nanite 喺 `fix/road-collision`，呢個 branch 冇改嗰
 - 保留 ±3 米限制，所以設計坡度超標比舊解法略高（1.82% vs 1.29%）。
 - 路面路口差（全部，連橋）最大仍有 28.6 米，係橋同地面路嘅接觸位，未處理。
 - 車泊喺左線係按「車頭方向嘅左邊」，冇讀 `oneway`，單程路可能泊錯邊。
+
+## 上到車但係車唔郁（branch `fix/car-drive`，2026-11-03）
+
+Sean 部 PC 用 `54535be` build 同烘焙成功，撳 F 上到車，但係 HUD 一直 `0 km/h`，車身好似斜咗、浮喺路邊。
+
+### 根本原因
+
+1. **車身冇開物理模擬**：`AWheeledVehiclePawn` 建構時設 `Mesh->BodyInstance.bSimulatePhysics = false`。UE 官方設定步驟要求喺 mesh 剔 Simulate Physics。`AHKCar` 由頭到尾冇 call `SetSimulatePhysics(true)`（成個 source 只有 `HKHelicopter` 有），所以車身係 kinematic，Chaos 加幾多扭力都推唔郁，車停喺烘焙位置（路面 +1 米，唔跟路斜），所以睇落斜咗、浮咗。
+2. **四個轆都綁喺 `Root`，即係車身嗰塊 physics body**：Chaos `FixupSkeletalMesh` 會將每個「轆骨」嘅 physics body 設做唔碰撞（`ECR_Ignore`）同唔模擬（`SetInstanceSimulatePhysics(false)`）。轆骨同車身共用 `Root`，即係將車身本身關咗。
+3. 附帶：`SM_HKChassis` 六塊面全部反轉（用返 `AppendPrim` 嗰條 UE 規則 `Cross(P2-P0, P1-P0)` 計，6/6 向入），所以由上面睇見到車廂入面，好似「反轉」。
+
+之前寫「手掣冇拉所以車溜走」係估錯：車身根本冇模擬，唔會溜。
+
+### 修正
+
+- `AHKCar::EnableChassisPhysics()`（`BeginPlay`）：恢復每塊 body 嘅碰撞，然後 `SetSimulatePhysics(true)`。舊地圖都有效。
+- 烘焙：骨架加 `Wheel_FL/FR/RL/RR`（`Root` 嘅子骨，喺原點，冇 physics body），轆改綁呢四條骨，位置照用 `AdditionalOffset`。舊地圖冇呢四條骨就退返 `Root`，log 會提你重新烘焙。
+- 烘焙：車身六塊面改返正確方向。
+- 泊住嘅車：`BeginPlay` 照 `Park()`（腳掣 + 手掣），而且立即做 `HoldIfGroundUnloaded()`，避免未載入地面就跌落去。
+
+### 未測試
+
+- **未 build、未 PIE**。呢部機冇 Unreal。要確認：揸得郁、轉彎、泊住嘅車唔溜、落車再上車。
+- 轆彈簧 `SpringRate` 由 45000 改咗做 600，`SpringPreload` 50，`SuspensionMaxRaise` 10 cm（2026-11-03）。推斷：45000 太硬，開咗物理之後積分唔穩，令車 spawn 時反轉；「Chaos 內部 ×100」都係推論，**未驗證**，要等 Sean 喺 PIE 試過先算修好。另外加咗 `SelfRightIfFlipped`（冇 sweep，喺橋底或者隧道入面可能會卡入天花）。
+
+## 路闊、標線、路口、小路、建築、單程路、泊車高度（branch `fix/car-drive`，2026-11-03）
+
+詳細計劃同數字：`docs/ROAD_VISUALS_PLAN.md`。**全部未喺 UE 編譯、烘焙或者玩過**，以下只係 pipeline 同 Python 檢查嘅結果。
+
+### 改咗乜
+- 路闊跟 warp 垂直路方向嘅壓縮比，每線最少 3.0 m、最多真實線闊；無連接路面重疊 1.883%、灰板 1.946%。
+- 路面標線改用米：UV0 = (沿路米, 離左邊米)，UV1 = (路闊, 分隔位 + 線數)，vertex colour R = 標線開關。黃邊線 0.12 m、白虛線分線、雙程先有雙白中線、路口冇線。單程路有中線 = 0。
+- 路口補面 22,766 個（material 3，冇標線）。
+- 新增 residential / living_street / service 車路，footway / pedestrian / steps 行人路（material 4），主路兩邊 1.5 m × 0.15 m 行人路帶。
+- 建築：細建築門檻降低、新外牆色盤、天台淺灰同牆分開（M_Facade）。陸地上 72,873 棟（之前 71,955）。
+- 單程路：讀 `oneway`、roundabout、motorway。車跟合法方向泊最左線，逆向 0。
+- 車喺半空出世：原因係烘焙將車放喺 spawn + 100 cm，而 main 車身係 kinematic，所以一直吊住；開咗物理之後會跌 1 m。而家 spawn 計 4 轆路面高同 pitch，z = 接觸點 + 0.02 m，烘焙唔再加 100 cm，用 pitch；`HoldIfGroundUnloaded` trace 由車上 1 m 開始。最大轆離地 0.079 m。
+- 三角形 2.83M → 4.51M（+59.6%）。
+
+### 退步（要知）
+- tunnel within step 97.18% → 93.49%；coast agree 99.758% → 99.644%（海邊 service 路）；橋淨空最低 5.26 → 5.03 m。
+
+### 未測試
+- M_Road / M_Facade HLSL 未 compile；UV1（TEXCOORD_1）讀取未試；Nanite 下 UV 精度未睇。
+- 路邊石垂直面可能有 winding 警告。
+- 車 spawn 高度、pitch 喺 Chaos 入面穩唔穩未試。

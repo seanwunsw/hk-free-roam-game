@@ -38,6 +38,8 @@ def write_glb(path: Path, primitives: list[dict]) -> None:
         nrm = np.ascontiguousarray(prim["normals"], dtype=np.float32)
         uv = np.ascontiguousarray(prim["uvs"], dtype=np.float32)
         col = np.ascontiguousarray(prim["colors"], dtype=np.float32)
+        uv1 = prim.get("uvs1")
+        uv1 = None if uv1 is None else np.ascontiguousarray(uv1, dtype=np.float32)
         idx = np.ascontiguousarray(prim["indices"], dtype=np.uint32)
         if pos.shape[0] == 0 or idx.shape[0] == 0:
             continue
@@ -51,6 +53,10 @@ def write_glb(path: Path, primitives: list[dict]) -> None:
         blob.extend(uv.tobytes())
         col_off = len(blob)
         blob.extend(col.tobytes())
+        uv1_off = len(blob)
+        if uv1 is not None:
+            # HKGM flag 2: TEXCOORD_1 follows the colours (vert_off + count * 48).
+            blob.extend(uv1.tobytes())
         align()
         idx_off = len(blob)
         index_count = int(idx.shape[0])
@@ -78,15 +84,18 @@ def write_glb(path: Path, primitives: list[dict]) -> None:
         a_uv = add_acc(v_uv, "VEC2", 5126, vert_count)
         a_col = add_acc(v_col, "VEC4", 5126, vert_count)
         a_idx = add_acc(v_idx, "SCALAR", 5125, index_count)
+        attributes = {"POSITION": a_pos, "NORMAL": a_nrm, "TEXCOORD_0": a_uv, "COLOR_0": a_col}
+        if uv1 is not None:
+            attributes["TEXCOORD_1"] = add_acc(add_view(uv1_off, vert_count * 8, 34962), "VEC2", 5126, vert_count)
         mesh_prims.append(
             {
-                "attributes": {"POSITION": a_pos, "NORMAL": a_nrm, "TEXCOORD_0": a_uv, "COLOR_0": a_col},
+                "attributes": attributes,
                 "indices": a_idx,
                 "material": int(prim.get("material", 0)),
                 "mode": 4,
             }
         )
-        hkgm.extend(struct.pack("<6I", vert_off, vert_count, idx_off, index_count, 1, int(prim.get("material", 0))))
+        hkgm.extend(struct.pack("<6I", vert_off, vert_count, idx_off, index_count, 1 | (2 if uv1 is not None else 0), int(prim.get("material", 0))))
         written += 1
 
     struct.pack_into("<I", hkgm, 0, written)
@@ -99,6 +108,8 @@ def write_glb(path: Path, primitives: list[dict]) -> None:
             {"name": "Facade", "pbrMetallicRoughness": {"baseColorFactor": [0.7, 0.68, 0.64, 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.85}},
             {"name": "Road", "pbrMetallicRoughness": {"baseColorFactor": [0.12, 0.12, 0.13, 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.92}},
             {"name": "Water", "pbrMetallicRoughness": {"baseColorFactor": [0.05, 0.25, 0.35, 0.75], "metallicFactor": 0.0, "roughnessFactor": 0.15}, "alphaMode": "BLEND"},
+            {"name": "JunctionFill", "pbrMetallicRoughness": {"baseColorFactor": [0.12, 0.12, 0.13, 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.92}},
+            {"name": "Pavement", "pbrMetallicRoughness": {"baseColorFactor": [0.45, 0.44, 0.42, 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.9}},
         ],
         "meshes": [{"name": path.stem, "primitives": mesh_prims}],
         "accessors": accessors,
@@ -156,8 +167,12 @@ def read_hkgm_primitives(path: Path) -> list[dict]:
         uv = np.frombuffer(bin_bytes, dtype=np.float32, count=vert_count * 2, offset=vert_off + vert_count * 24).reshape(-1, 2).copy()
         col = np.frombuffer(bin_bytes, dtype=np.float32, count=vert_count * 4, offset=vert_off + vert_count * 32).reshape(-1, 4).copy()
         indices = np.frombuffer(bin_bytes, dtype=np.uint32, count=index_count, offset=idx_off).copy()
+        uv1 = None
+        if flags & 2:
+            uv1 = np.frombuffer(bin_bytes, dtype=np.float32, count=vert_count * 2, offset=vert_off + vert_count * 48).reshape(-1, 2).copy()
         prims.append(
             {
+                "uvs1": uv1,
                 "positions": pos,
                 "normals": nrm,
                 "uvs": uv,

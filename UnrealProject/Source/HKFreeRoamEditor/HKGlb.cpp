@@ -83,18 +83,20 @@ bool HKLoadGlb(const FString& Path, TArray<FHKGlbPrim>& OutPrims, FString& OutEr
 		const uint32 VertCount = Header[1];
 		const uint32 IndexOff = Header[2];
 		const uint32 IndexCount = Header[3];
+		const uint32 Flags = Header[4];
 		const uint32 Material = Header[5];
 		if (VertCount == 0 || IndexCount < 3 || VertCount > 2000000 || IndexCount > 6000000)
 		{
 			continue;
 		}
-		TArray<float> Pos, Nrm, Uv, Col;
+		TArray<float> Pos, Nrm, Uv, Col, Uv1;
 		TArray<uint32> Indices;
 		Indices.SetNumUninitialized(IndexCount);
 		if (!ReadFloats(Bin, (int32)VertOff, (int32)VertCount * 3, Pos) ||
 			!ReadFloats(Bin, (int32)VertOff + (int32)VertCount * 12, (int32)VertCount * 3, Nrm) ||
 			!ReadFloats(Bin, (int32)VertOff + (int32)VertCount * 24, (int32)VertCount * 2, Uv) ||
 			!ReadFloats(Bin, (int32)VertOff + (int32)VertCount * 32, (int32)VertCount * 4, Col) ||
+			((Flags & 2u) && !ReadFloats(Bin, (int32)VertOff + (int32)VertCount * 48, (int32)VertCount * 2, Uv1)) ||
 			(int32)IndexOff + (int32)IndexCount * 4 > Bin.Num())
 		{
 			OutError = FString::Printf(TEXT("primitive %u is out of range"), PrimIndex);
@@ -108,6 +110,14 @@ bool HKLoadGlb(const FString& Path, TArray<FHKGlbPrim>& OutPrims, FString& OutEr
 		Prim.Normals.SetNum(VertCount);
 		Prim.UVs.SetNum(VertCount);
 		Prim.Colors.SetNum(VertCount);
+		if (Uv1.Num() == (int32)VertCount * 2)
+		{
+			Prim.UV1s.SetNum(VertCount);
+			for (uint32 Vertex = 0; Vertex < VertCount; ++Vertex)
+			{
+				Prim.UV1s[Vertex] = FVector2f(Uv1[Vertex * 2], Uv1[Vertex * 2 + 1]);
+			}
+		}
 		for (uint32 Vertex = 0; Vertex < VertCount; ++Vertex)
 		{
 			Prim.Positions[Vertex] = FVector3f(Pos[Vertex * 3], Pos[Vertex * 3 + 1], Pos[Vertex * 3 + 2]);

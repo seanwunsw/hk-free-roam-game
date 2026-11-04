@@ -1,0 +1,14 @@
+{
+  "_comment": "HK.ReloadHandling sweeps/awd_f180.json, then HK.DriveTest AWD: drivefix3 AWD (candidate A) over vehicles.json. HK.ReloadHandling with no file goes back to vehicles.json (candidate B).",
+  "classes": {
+    "AWD": {
+      "Wheels": {
+        "FrictionFront": 1.8,
+        "FrictionRear": 1.85,
+        "BrakeTorqueFront": 2200,
+        "BrakeTorqueRear": 1300,
+        "RollbarScaling": 0.45
+      }
+    }
+  }
+}

@@ -90,18 +90,37 @@ def ground_lift(highway: str) -> float:
     return 0.10 + 0.012 * max(0, len(ROAD_CLASSES) - rank)
 
 
-def make_road(xy, terrain_z, highway, lanes, mode, layer, horizontal, keys=None) -> dict:
-    width, lanes = road_game_width(highway, lanes, horizontal)
-    half = np.full(len(xy), width * 0.5)
+def make_road(xy, terrain_z, highway, lanes, mode, layer, horizontal, keys=None, perp=None, oneway=False) -> dict:
+    """One road way. perp is the warp scale across the road (defaults to horizontal).
+    A one-way road's points run in its legal direction."""
+    width, lanes = road_game_width(highway, lanes, horizontal if perp is None else perp)
+    n = len(xy)
+    half = np.full(n, width * 0.5)
+    # Lanes on each side of the direction split. Hong Kong drives on the left, so for
+    # a two-way road the left half (of the point order) carries the forward lanes.
+    if oneway or lanes < 2:
+        lanes_l, lanes_r = lanes, 0
+    else:
+        lanes_l, lanes_r = lanes - lanes // 2, lanes // 2
     return {
         "xy": np.asarray(xy, dtype=np.float64),
-        "keys": np.full(len(xy), -1, dtype=np.int64) if keys is None else np.asarray(keys, dtype=np.int64),
+        "keys": np.full(n, -1, dtype=np.int64) if keys is None else np.asarray(keys, dtype=np.int64),
         "terrain": np.asarray(terrain_z, dtype=np.float64),
         "width": width,
         "base_half": width * 0.5,
         "hl": half.copy(),
         "hr": half.copy(),
         "lanes": lanes,
+        "lane_m": width / lanes,
+        "oneway": bool(oneway),
+        # Lanes absorbed by merge_parallel on each side, and whether any of them
+        # carries traffic against this way (so the merged ribbon is two-way).
+        "add_l": np.zeros(n, dtype=np.int64),
+        "add_r": np.zeros(n, dtype=np.int64),
+        "opp_l": np.zeros(n, dtype=bool),
+        "opp_r": np.zeros(n, dtype=bool),
+        "own_l": lanes_l,
+        "own_r": lanes_r,
         "highway": highway,
         "mode": mode,
         "layer": int(layer),
@@ -112,7 +131,7 @@ def make_road(xy, terrain_z, highway, lanes, mode, layer, horizontal, keys=None)
 
 def slice_road(road: dict, start: int, end: int) -> dict:
     out = dict(road)
-    for key in ("xy", "terrain", "hl", "hr", "design", "keys"):
+    for key in ("xy", "terrain", "hl", "hr", "design", "keys", "add_l", "add_r", "opp_l", "opp_r", "fade"):
         if key in road:
             out[key] = road[key][start:end].copy()
     return out
@@ -166,6 +185,11 @@ def merge_parallel(roads: list[dict], log=print) -> list[dict]:
     group = np.repeat([keys.setdefault(_group_key(r), len(keys)) for r in roads], sizes)
     g_hl = np.concatenate([r["hl"] for r in roads])
     g_hr = np.concatenate([r["hr"] for r in roads])
+    total = len(pts)
+    g_add_l = np.zeros(total, dtype=np.int64)
+    g_add_r = np.zeros(total, dtype=np.int64)
+    g_opp_l = np.zeros(total, dtype=bool)
+    g_opp_r = np.zeros(total, dtype=bool)
     alive = np.ones(len(pts), dtype=bool)
     tree = cKDTree(pts)
     kept_runs: dict[int, list[tuple[int, int]]] = {}
@@ -205,10 +229,18 @@ def merge_parallel(roads: list[dict], log=print) -> list[dict]:
                         absorbed[s:e] = False
                 pick = pick[absorbed[bp[pick]]]
                 cc, need, left = c[pick], new_side[pick], lat[pick] >= 0
+                opposite = np.sum(tan[cc] * tan[sl][bp[pick]], axis=1) < 0
+                if not road.get("oneway", False):
+                    opposite[:] = True
+                lanes_b = np.full(len(cc), int(road.get("lanes", 1)))
                 for shift in (-1, 0, 1):
                     k = np.clip(cc + shift, first[cc], last[cc])
                     np.maximum.at(g_hl, k[left], need[left])
                     np.maximum.at(g_hr, k[~left], need[~left])
+                    np.maximum.at(g_add_l, k[left], lanes_b[left])
+                    np.maximum.at(g_add_r, k[~left], lanes_b[~left])
+                    g_opp_l[k[left & opposite]] = True
+                    g_opp_r[k[~left & opposite]] = True
         free = ~absorbed
         runs = []
         keep_mask = np.zeros(n, dtype=bool)
@@ -231,6 +263,9 @@ def merge_parallel(roads: list[dict], log=print) -> list[dict]:
             arr = maximum_filter1d(arr_all[offsets[i] : offsets[i + 1]], size=3, mode="nearest")
             arr = np.convolve(np.pad(arr, 1, mode="edge"), np.ones(3) / 3.0, mode="valid")
             road[key] = np.maximum(arr, base)
+        part = slice(offsets[i], offsets[i + 1])
+        for key, arr_all in (("add_l", g_add_l), ("add_r", g_add_r), ("opp_l", g_opp_l), ("opp_r", g_opp_r)):
+            road[key] = maximum_filter1d(arr_all[part], size=3, mode="nearest")
         for s, e in kept_runs.get(i, []):
             out.append(slice_road(road, s, e))
     widened = sum(1 for r in out if np.any(r["hl"] > r["base_half"] + 0.01) or np.any(r["hr"] > r["base_half"] + 0.01))
@@ -649,20 +684,62 @@ def bridge_clearance_report(roads: list[dict]) -> dict:
     }
 
 
+ACROSS_MAX_M = 6.5
+
+
 def ribbon_grid(road: dict):
-    """(N, M, 2) vertex positions across the ribbon, left edge first, and v coordinates."""
+    """(N, M, 2) vertex positions across the ribbon, left edge first, and v coordinates.
+
+    The carve makes the ground flat across a road, so a ribbon up to ACROSS_MAX_M
+    wide needs no inner column; wider ones get a column every ACROSS_M or so."""
     xy = road["xy"]
     normals = left_normals(xy)
     width = road["hl"] + road["hr"]
-    m = max(2, int(math.ceil(float(width.max()) / ACROSS_M)) + 1)
+    wmax = float(width.max())
+    m = 2 if wmax <= ACROSS_MAX_M else max(3, int(math.ceil(wmax / ACROSS_M)) + 1)
     v = np.linspace(0.0, 1.0, m)
     offset = road["hl"][:, None] - v[None, :] * width[:, None]
     pos = xy[:, None, :] + normals[:, None, :] * offset[:, :, None]
     return pos, v
 
 
+def lane_layout(road: dict):
+    """Per centreline point: ribbon width, direction split (metres from the left
+    edge; equal to the width when the ribbon is one-way), lanes left and right of it."""
+    hl, hr = road["hl"], road["hr"]
+    width = hl + hr
+    n = len(hl)
+    own_l = int(road.get("own_l", road.get("lanes", 1)))
+    own_r = int(road.get("own_r", 0))
+    add_l = road.get("add_l", np.zeros(n, dtype=np.int64))
+    add_r = road.get("add_r", np.zeros(n, dtype=np.int64))
+    opp_l = road.get("opp_l", np.zeros(n, dtype=bool))
+    opp_r = road.get("opp_r", np.zeros(n, dtype=bool))
+    bh = float(road.get("base_half", float(width.min()) * 0.5))
+    if own_r > 0:
+        split = hl.copy()
+        lanes_l = own_l + add_l
+        lanes_r = own_r + add_r
+    else:
+        right = opp_r
+        left = opp_l & ~opp_r
+        split = np.where(right, hl + bh, np.where(left, hl - bh, width))
+        lanes_l = np.where(right, own_l + add_l, np.where(left, add_l, own_l + add_l + add_r))
+        lanes_r = np.where(right, add_r, np.where(left, own_l + add_r, 0))
+    split = np.clip(split, 0.0, width)
+    return width, split, np.asarray(lanes_l, dtype=np.int64), np.asarray(lanes_r, dtype=np.int64)
+
+
+def marking_code(split: np.ndarray, lanes_l: np.ndarray, lanes_r: np.ndarray) -> np.ndarray:
+    """UV1.y: split metres + 64 * lanes left + 1024 * lanes right (M_Road decodes it)."""
+    return np.clip(split, 0.0, 63.9) + 64.0 * np.clip(lanes_l, 0, 15) + 1024.0 * np.clip(lanes_r, 0, 15)
+
+
 def build_ribbon(road: dict, surface_at) -> dict | None:
-    """World-space ribbon mesh (x east, y north, z up) for one road piece."""
+    """World-space ribbon mesh (x east, y north, z up) for one road piece.
+
+    uv: (metres along, metres from the left edge). uv1: (ribbon width, marking code).
+    color: R = markings on (0 inside junctions), G = 0 (asphalt), A = mode alpha."""
     xy = road["xy"]
     if len(xy) < 2:
         return None
@@ -676,7 +753,13 @@ def build_ribbon(road: dict, surface_at) -> dict | None:
         z = surface_at(flat[:, 0], flat[:, 1]).reshape(n, m) + ground_lift(road["highway"])
     verts = np.column_stack([flat, z.reshape(-1)])
     s = arc_length(xy)
-    uv = np.column_stack([np.repeat(s, m), np.tile(v, n)])
+    width, split, lanes_l, lanes_r = lane_layout(road)
+    uv = np.column_stack([np.repeat(s, m), (v[None, :] * width[:, None]).reshape(-1)])
+    uv1 = np.column_stack([np.repeat(width, m), np.repeat(marking_code(split, lanes_l, lanes_r), m)])
+    fade = road.get("fade", np.ones(n))
+    color = np.zeros((n * m, 4))
+    color[:, 0] = np.repeat(fade, m)
+    color[:, 3] = MODE_ALPHA[road["mode"]]
     ii, jj = np.meshgrid(np.arange(n - 1), np.arange(m - 1), indexing="ij")
     p0 = (ii * m + jj).reshape(-1)
     p1 = p0 + 1
@@ -684,7 +767,7 @@ def build_ribbon(road: dict, surface_at) -> dict | None:
     p3 = p0 + m
     # Same winding as geometry.append_ribbon: (p0, p3, p2) and (p0, p2, p1) face +Y in glTF.
     tris = np.concatenate([np.column_stack([p0, p3, p2]), np.column_stack([p0, p2, p1])])
-    return {"verts": verts, "uv": uv, "tris": tris, "alpha": MODE_ALPHA[road["mode"]]}
+    return {"verts": verts, "uv": uv, "uv1": uv1, "color": color, "tris": tris, "alpha": MODE_ALPHA[road["mode"]], "material": 1}
 
 
 def vertex_normals_gltf(verts_gltf: np.ndarray, tris: np.ndarray) -> np.ndarray:

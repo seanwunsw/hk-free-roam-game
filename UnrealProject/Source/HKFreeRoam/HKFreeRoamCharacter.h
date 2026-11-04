@@ -25,6 +25,11 @@ public:
 
 	void SetSprinting(bool bInSprinting);
 
+	/** Scroll-wheel zoom of the follow camera, in wheel notches (+ = in). Smoothed in Tick. */
+	void AddCameraZoom(float Notches);
+
+	virtual void Tick(float DeltaSeconds) override;
+
 	/** Capsule half-height plus GroundClearance: how far above a ground hit to put the actor origin. */
 	float GetGroundLift() const;
 
@@ -52,4 +57,8 @@ private:
 	TObjectPtr<UHKPlayerAvatar> Avatar;
 
 	bool bSprinting = false;
+	/** Arm length FrameCamera picked for the body; the zoom scales it. */
+	float BaseArmLength = 380.f;
+	float Zoom = 1.f;
+	float ZoomTarget = 1.f;
 };

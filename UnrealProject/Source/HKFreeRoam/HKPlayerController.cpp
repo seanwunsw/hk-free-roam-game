@@ -77,6 +77,8 @@ void AHKPlayerController::BuildInput()
 	MoveAction->ValueType = EInputActionValueType::Axis2D;
 	LookAction = NewObject<UInputAction>(this, TEXT("IA_Look"));
 	LookAction->ValueType = EInputActionValueType::Axis2D;
+	ZoomAction = NewObject<UInputAction>(this, TEXT("IA_Zoom"));
+	ZoomAction->ValueType = EInputActionValueType::Axis1D;
 	JumpAction = NewObject<UInputAction>(this, TEXT("IA_Jump"));
 	JumpAction->ValueType = EInputActionValueType::Boolean;
 	SprintAction = NewObject<UInputAction>(this, TEXT("IA_Sprint"));
@@ -101,6 +103,8 @@ void AHKPlayerController::BuildInput()
 	HelpAction->ValueType = EInputActionValueType::Boolean;
 	QualityAction = NewObject<UInputAction>(this, TEXT("IA_Quality"));
 	QualityAction->ValueType = EInputActionValueType::Boolean;
+	MinimapZoomAction = NewObject<UInputAction>(this, TEXT("IA_MinimapZoom"));
+	MinimapZoomAction->ValueType = EInputActionValueType::Boolean;
 
 	FootContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Foot"));
 	CarContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Car"));
@@ -126,10 +130,13 @@ void AHKPlayerController::BuildInput()
 	UInputModifierScalar* Scale = NewObject<UInputModifierScalar>(AlwaysContext);
 	Scale->Scalar = FVector(0.08, 0.08, 1.0);
 	Look.Modifiers.Add(Scale);
+	// Scroll wheel: +1 per notch away from the user (zoom in).
+	AlwaysContext->MapKey(ZoomAction, EKeys::MouseWheelAxis);
 	AlwaysContext->MapKey(InteractAction, EKeys::F);
 	AlwaysContext->MapKey(MapAction, EKeys::M);
 	AlwaysContext->MapKey(HelpAction, EKeys::F1);
 	AlwaysContext->MapKey(QualityAction, EKeys::F9);
+	AlwaysContext->MapKey(MinimapZoomAction, EKeys::N);
 }
 
 void AHKPlayerController::SetupInputComponent()
@@ -144,6 +151,7 @@ void AHKPlayerController::SetupInputComponent()
 	Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AHKPlayerController::OnMove);
 	Input->BindAction(MoveAction, ETriggerEvent::Completed, this, &AHKPlayerController::OnMoveCompleted);
 	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &AHKPlayerController::OnLook);
+	Input->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &AHKPlayerController::OnZoom);
 	Input->BindAction(JumpAction, ETriggerEvent::Started, this, &AHKPlayerController::OnJumpStarted);
 	Input->BindAction(JumpAction, ETriggerEvent::Completed, this, &AHKPlayerController::OnJumpCompleted);
 	Input->BindAction(SprintAction, ETriggerEvent::Started, this, &AHKPlayerController::OnSprintStarted);
@@ -163,6 +171,7 @@ void AHKPlayerController::SetupInputComponent()
 	Input->BindAction(MapAction, ETriggerEvent::Started, this, &AHKPlayerController::OnToggleMap);
 	Input->BindAction(HelpAction, ETriggerEvent::Started, this, &AHKPlayerController::OnToggleHelp);
 	Input->BindAction(QualityAction, ETriggerEvent::Started, this, &AHKPlayerController::OnCycleQuality);
+	Input->BindAction(MinimapZoomAction, ETriggerEvent::Started, this, &AHKPlayerController::OnToggleMinimapZoom);
 }
 
 void AHKPlayerController::BeginPlay()
@@ -211,6 +220,13 @@ void AHKPlayerController::OnPossess(APawn* InPawn)
 	AActor* PreviousView = PlayerCameraManager ? PlayerCameraManager->GetViewTarget() : nullptr;
 	const bool bBlend = GetPawn() && GetPawn() != InPawn && PreviousView && PreviousView != InPawn;
 	Super::OnPossess(InPawn);
+	// AController::OnPossess copies the pawn's full rotation into the control rotation. A pitched,
+	// rolled or flipped car (or the walker that rode in it) then tilts every spring arm that uses
+	// the control rotation. Keep only the heading, no roll, and a level-ish pitch.
+	if (InPawn)
+	{
+		SetControlRotation(UprightRotation(InPawn, -12.f));
+	}
 	if (bBlend && PlayerCameraManager)
 	{
 		PlayerCameraManager->SetViewTarget(PreviousView);
@@ -270,9 +286,31 @@ void AHKPlayerController::OnLook(const FInputActionValue& Value)
 	// Mouse2D +Y follows the screen and points downward, so pitch is inverted.
 	AddYawInput(Look.X);
 	AddPitchInput(-Look.Y);
+	if (AHKCar* Car = Cast<AHKCar>(GetPawn()))
+	{
+		// The chase camera ignores the control rotation; it takes the look offset and recentres.
+		Car->AddCameraLook(Look.X, -Look.Y);
+	}
 	if (AHKHelicopter* Heli = Cast<AHKHelicopter>(GetPawn()))
 	{
 		Heli->SetMouseCyclic(FMath::Clamp(Look.X * 0.35f, -1.f, 1.f), FMath::Clamp(-Look.Y * 0.35f, -1.f, 1.f));
+	}
+}
+
+void AHKPlayerController::OnZoom(const FInputActionValue& Value)
+{
+	const float Notches = Value.Get<float>();
+	if (bMapOpen || FMath::IsNearlyZero(Notches))
+	{
+		return;
+	}
+	if (AHKCar* Car = Cast<AHKCar>(GetPawn()))
+	{
+		Car->AddCameraZoom(Notches);
+	}
+	else if (AHKFreeRoamCharacter* Walker = Cast<AHKFreeRoamCharacter>(GetPawn()))
+	{
+		Walker->AddCameraZoom(Notches);
 	}
 }
 
@@ -393,6 +431,11 @@ void AHKPlayerController::OnHover()
 	}
 }
 
+void AHKPlayerController::OnToggleMinimapZoom()
+{
+	bMinimapZoomed = !bMinimapZoomed;
+}
+
 void AHKPlayerController::OnToggleMap()
 {
 	bMapOpen = !bMapOpen;
@@ -485,6 +528,14 @@ AActor* AHKPlayerController::FindRide() const
 	return Best;
 }
 
+FRotator AHKPlayerController::UprightRotation(const AActor* Actor, float Pitch)
+{
+	// Heading from the forward vector so a car on its roof still gives its real yaw.
+	const FVector Forward = Actor->GetActorForwardVector();
+	const float Yaw = FMath::Abs(Forward.Z) < 0.99f ? FMath::RadiansToDegrees(FMath::Atan2(Forward.Y, Forward.X)) : Actor->GetActorRotation().Yaw;
+	return FRotator(Pitch, Yaw, 0.f);
+}
+
 void AHKPlayerController::ExitVehicle()
 {
 	APawn* Vehicle = GetPawn();
@@ -509,7 +560,10 @@ void AHKPlayerController::ExitVehicle()
 		Exit.Z = Vehicle->GetActorLocation().Z + Lift;
 	}
 	Walker->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	Walker->SetActorLocation(Exit, false, nullptr, ETeleportType::TeleportPhysics);
+	// While riding the walker was snapped to the vehicle, so it carries the vehicle's pitch and
+	// roll. CharacterMovement never removes them (RotationRate has no pitch or roll), so stand it
+	// up facing the vehicle's heading.
+	Walker->SetActorLocationAndRotation(Exit, UprightRotation(Vehicle, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
 	Walker->SetActorHiddenInGame(false);
 	Walker->SetActorEnableCollision(true);
 	Walker->GetCharacterMovement()->Activate();

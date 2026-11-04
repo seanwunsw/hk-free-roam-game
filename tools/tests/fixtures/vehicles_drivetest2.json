@@ -1,0 +1,630 @@
+{
+  "_comment": "Driving classes for AHKCar. Read at runtime (HK.ReloadHandling reloads it) and by tools/drive_model. Three classes by drivetrain (FR, FF, AWD). Each class is Defaults deep-merged with its own block. Units: kg, cm, Nm, rpm, Hz, km/h, seconds; Assist fields are hkdrive::Params in shared/hk_drive_assist.h. Targets are [min, max] pass ranges for HK.DriveTest; null means no bound. See docs/DRIVING_PLAN.md.",
+  "version": 1,
+  "default_class": "FR",
+  "assign": {
+    "TuenMun_0": "FR",
+    "Central_0": "FR",
+    "Central_1": "FF",
+    "Central_2": "AWD",
+    "WanChai_0": "FF",
+    "CausewayBay_0": "FR",
+    "TST_0": "FR",
+    "TST_1": "FF",
+    "YauMaTei_0": "FF",
+    "MongKok_0": "FF",
+    "MongKok_1": "FR",
+    "KaiTak_0": "FR",
+    "ShaTin_0": "AWD",
+    "Lantau_0": "AWD",
+    "KwunTong_0": "FF",
+    "TseungKwanO_0": "FR",
+    "TsuenWan_0": "FF",
+    "KwaiChung_0": "AWD",
+    "YuenLong_0": "AWD",
+    "TaiPo_0": "FR",
+    "Fanling_0": "AWD",
+    "SaiKung_0": "AWD",
+    "Aberdeen_0": "FF",
+    "Stanley_0": "FR",
+    "Airport_0": "AWD",
+    "CheungChau_0": "FF"
+  },
+  "lot": {
+    "_comment": "Runtime-only extra cars parked in line with the anchor car so every class is a short walk from the player start. enabled false (or console HK.CarLot 0 before the anchor loads) turns it off.",
+    "enabled": true,
+    "anchor": "TuenMun_0",
+    "classes": [
+      "FF",
+      "AWD"
+    ],
+    "spacing_m": 7.5
+  },
+  "Defaults": {
+    "Chassis": {
+      "MassKg": 1450,
+      "ComX": 0,
+      "ComZ": 45,
+      "InertiaScale": {
+        "X": 1.0,
+        "Y": 1.0,
+        "Z": 1.0
+      },
+      "DragCoefficient": 0.32,
+      "Drive": "RWD",
+      "FrontRearSplit": 0.5,
+      "IdleBrake": 0.0
+    },
+    "Engine": {
+      "MaxTorqueNm": 480,
+      "MaxRPM": 7000,
+      "IdleRPM": 900,
+      "TorqueRpm": [
+        0,
+        1500,
+        3500,
+        5500,
+        7000
+      ],
+      "TorqueScale": [
+        0.5,
+        0.78,
+        1.0,
+        0.95,
+        0.75
+      ],
+      "RevUpMOI": 5.0,
+      "RevDownRate": 600,
+      "EngineBrake": 0.05,
+      "FinalRatio": 3.7,
+      "Gears": [
+        3.3,
+        2.2,
+        1.6,
+        1.25,
+        1.0,
+        0.82
+      ],
+      "ReverseGear": 3.4,
+      "ChangeUpRPM": 6600,
+      "ChangeDownRPM": 3000,
+      "ShiftTime": 0.18
+    },
+    "Wheels": {
+      "RadiusCm": 34,
+      "WidthCm": 22,
+      "RideHzFront": 2.0,
+      "RideHzRear": 2.1,
+      "DampingRatio": 0.55,
+      "Preload": 50,
+      "MaxRaiseCm": 10,
+      "MaxDropCm": 12,
+      "FrictionFront": 3.4,
+      "FrictionRear": 3.4,
+      "CorneringStiffness": 1000,
+      "WheelLoadRatio": 0.5,
+      "BrakeTorqueFront": 2200,
+      "BrakeTorqueRear": 1300,
+      "HandbrakeTorque": 4000,
+      "bABS": true,
+      "bTractionControlFront": true,
+      "bTractionControlRear": true,
+      "RollbarScaling": 0.6
+    },
+    "Assist": {
+      "MaxSteerDeg": 36,
+      "WheelbaseM": 2.7,
+      "GripG": 1.0,
+      "SteerSpeedRefKmh": 140,
+      "HighSpeedSteer": 0.35,
+      "SteerRise": 3.5,
+      "SteerReturn": 6.0,
+      "ThrottleRise": 3.0,
+      "ThrottleFall": 6.0,
+      "BrakeRise": 7.0,
+      "BrakeFall": 10.0,
+      "TopSpeedKmh": 260,
+      "YawDamping": 4.0,
+      "MaxSlipDeg": 40,
+      "AntiSpin": 9.0,
+      "SpinDamping": 2.5,
+      "DriftSlipDeg": 25,
+      "HandbrakeRearGrip": 0.45,
+      "HandbrakeYawKick": 1.6,
+      "PowerOversteer": 0.25,
+      "GripRecoverSeconds": 0.6,
+      "CountersteerAssist": 3.0,
+      "AutoCountersteer": 0.25,
+      "DriftSteerOpen": 0.8,
+      "LateralGrip": 1.5,
+      "LateralGripMaxG": 0.3,
+      "HighSpeedGripKmh": 200,
+      "HighSpeedGripLoss": 0.0,
+      "DownforceG": 0.15,
+      "AllowedRollDeg": 4.0,
+      "AntiRoll": 12.0,
+      "RollDamping": 2.0,
+      "AirControl": 1.5,
+      "OffroadGrip": 0.75
+    },
+    "Camera": {
+      "ArmCm": 600,
+      "HeightCm": 150,
+      "PitchDeg": -10,
+      "BaseFov": 80,
+      "FovAdd": 12,
+      "FovSpeedKmh": 220,
+      "AccelPullCm": 60,
+      "BrakePushCm": 45,
+      "SpeedPullCm": 80,
+      "LatShiftCm": 35,
+      "LatRollDeg": 0.8,
+      "YawStiffness": 4.0,
+      "YawStiffnessFast": 8.0,
+      "VelocityBlend": 0.45,
+      "ShakeStartKmh": 150,
+      "ShakeDeg": 0.35,
+      "BumpShakeDeg": 0.6,
+      "RecenterDelay": 1.2,
+      "LagSpeed": 12.0
+    },
+    "Body": {
+      "CabinX": -15,
+      "CabinLength": 200,
+      "CabinWidth": 160,
+      "CabinHeight": 45
+    }
+  },
+  "classes": {
+    "FR": {
+      "_comment": "Front engine, rear-wheel drive, rear-biased weight (about 43/57): quickest launch of the three, torque to the rear only, throttle and handbrake steer the tail.",
+      "Chassis": {
+        "MassKg": 1450,
+        "ComX": -20,
+        "ComZ": 52,
+        "Drive": "RWD",
+        "FrontRearSplit": 1.0
+      },
+      "Engine": {
+        "MaxTorqueNm": 560,
+        "MaxRPM": 7200,
+        "ChangeUpRPM": 6800,
+        "ChangeDownRPM": 3000,
+        "TorqueRpm": [
+          0,
+          1500,
+          3500,
+          5500,
+          7200
+        ],
+        "TorqueScale": [
+          0.6,
+          0.85,
+          1.0,
+          0.95,
+          0.78
+        ],
+        "FinalRatio": 3.6,
+        "Gears": [
+          3.2,
+          2.15,
+          1.6,
+          1.25,
+          1.0,
+          0.82
+        ],
+        "ShiftTime": 0.12
+      },
+      "Wheels": {
+        "RideHzFront": 1.9,
+        "RideHzRear": 2.0,
+        "FrictionFront": 2.15,
+        "FrictionRear": 2.35,
+        "BrakeTorqueFront": 2300,
+        "BrakeTorqueRear": 1300,
+        "HandbrakeTorque": 4000,
+        "bTractionControlFront": false,
+        "bTractionControlRear": true,
+        "RollbarScaling": 0.5
+      },
+      "Assist": {
+        "TopSpeedKmh": 260,
+        "GripG": 1.0,
+        "SteerSpeedRefKmh": 140,
+        "HighSpeedSteer": 0.37,
+        "SteerRise": 3.8,
+        "ThrottleRise": 4.0,
+        "YawDamping": 3.8,
+        "MaxSlipDeg": 45,
+        "PowerOversteer": 0.5,
+        "HandbrakeRearGrip": 0.38,
+        "HandbrakeYawKick": 1.4,
+        "GripRecoverSeconds": 0.7,
+        "AllowedRollDeg": 4.5,
+        "DownforceG": 0.12,
+        "AntiSpin": 12.0
+      },
+      "Camera": {
+        "AccelPullCm": 70
+      },
+      "Body": {
+        "CabinX": -30,
+        "CabinLength": 190,
+        "CabinWidth": 160,
+        "CabinHeight": 40
+      },
+      "Targets": {
+        "Accel0To100S": [
+          3.8,
+          4.6
+        ],
+        "TopSpeedKmh": [
+          240,
+          275
+        ],
+        "Brake100To0M": [
+          32,
+          40
+        ],
+        "LatG60": [
+          1.0,
+          1.25
+        ],
+        "LatG120": [
+          1.0,
+          1.3
+        ],
+        "MaxRollDeg": [
+          null,
+          5.5
+        ],
+        "SlalomYawGain": [
+          40,
+          110
+        ],
+        "DriftEntryS": [
+          null,
+          0.7
+        ],
+        "DriftRecoverS": [
+          null,
+          1.8
+        ],
+        "DriftPeakSlipDeg": [
+          20,
+          60
+        ],
+        "Spins": [
+          null,
+          0
+        ],
+        "CamJitterDeg": [
+          null,
+          0.08
+        ],
+        "RoughMaxRollDeg": [
+          null,
+          10
+        ],
+        "SlalomLagS": [
+          null,
+          0.25
+        ],
+        "HandsOffRecoverS": [
+          null,
+          2.0
+        ],
+        "BrakeLockPct": [
+          null,
+          5
+        ]
+      }
+    },
+    "FF": {
+      "_comment": "Front-wheel drive: light and nose-heavy, quick steering, mild understeer at the limit, hard to spin.",
+      "Chassis": {
+        "MassKg": 1250,
+        "ComX": 32,
+        "ComZ": 45,
+        "Drive": "FWD",
+        "FrontRearSplit": 0.0
+      },
+      "Engine": {
+        "MaxTorqueNm": 300,
+        "MaxRPM": 6800,
+        "ChangeUpRPM": 6400,
+        "ChangeDownRPM": 2800,
+        "TorqueRpm": [
+          0,
+          1500,
+          3200,
+          5200,
+          6800
+        ],
+        "TorqueScale": [
+          0.6,
+          0.88,
+          1.0,
+          0.92,
+          0.75
+        ],
+        "FinalRatio": 4.0,
+        "Gears": [
+          3.4,
+          2.1,
+          1.5,
+          1.15,
+          0.92,
+          0.78
+        ]
+      },
+      "Wheels": {
+        "RideHzFront": 2.1,
+        "RideHzRear": 2.3,
+        "FrictionFront": 2.2,
+        "FrictionRear": 2.35,
+        "BrakeTorqueFront": 2100,
+        "BrakeTorqueRear": 1000,
+        "HandbrakeTorque": 3200,
+        "bTractionControlFront": true,
+        "bTractionControlRear": true,
+        "RollbarScaling": 0.6
+      },
+      "Assist": {
+        "TopSpeedKmh": 220,
+        "GripG": 0.98,
+        "SteerSpeedRefKmh": 150,
+        "HighSpeedSteer": 0.38,
+        "SteerRise": 4.5,
+        "SteerReturn": 7.0,
+        "ThrottleRise": 3.0,
+        "YawDamping": 5.0,
+        "MaxSlipDeg": 30,
+        "AntiSpin": 12.0,
+        "SpinDamping": 3.5,
+        "PowerOversteer": 0.0,
+        "HandbrakeRearGrip": 0.55,
+        "HandbrakeYawKick": 1.1,
+        "GripRecoverSeconds": 0.45,
+        "AutoCountersteer": 0.3,
+        "AllowedRollDeg": 4.0,
+        "DownforceG": 0.08
+      },
+      "Camera": {
+        "ArmCm": 570,
+        "HeightCm": 145
+      },
+      "Body": {
+        "CabinX": -15,
+        "CabinLength": 210,
+        "CabinWidth": 160,
+        "CabinHeight": 55
+      },
+      "Targets": {
+        "Accel0To100S": [
+          6.0,
+          8.5
+        ],
+        "TopSpeedKmh": [
+          205,
+          230
+        ],
+        "Brake100To0M": [
+          32,
+          40
+        ],
+        "LatG60": [
+          1.0,
+          1.25
+        ],
+        "LatG120": [
+          1.0,
+          1.3
+        ],
+        "MaxRollDeg": [
+          null,
+          5.0
+        ],
+        "SlalomYawGain": [
+          40,
+          100
+        ],
+        "DriftEntryS": [
+          null,
+          1.2
+        ],
+        "DriftRecoverS": [
+          null,
+          1.2
+        ],
+        "DriftPeakSlipDeg": [
+          8,
+          40
+        ],
+        "Spins": [
+          null,
+          0
+        ],
+        "CamJitterDeg": [
+          null,
+          0.08
+        ],
+        "RoughMaxRollDeg": [
+          null,
+          10
+        ],
+        "SlalomLagS": [
+          null,
+          0.2
+        ],
+        "HandsOffRecoverS": [
+          null,
+          1.5
+        ],
+        "BrakeLockPct": [
+          null,
+          5
+        ]
+      }
+    },
+    "AWD": {
+      "_comment": "All-wheel drive, 40/60 front/rear torque: heavy, stable, strong traction, softer longer suspension for rough ground.",
+      "Chassis": {
+        "MassKg": 1650,
+        "ComX": 13,
+        "ComZ": 55,
+        "Drive": "AWD",
+        "FrontRearSplit": 0.6,
+        "InertiaScale": {
+          "X": 1.05,
+          "Y": 1.05,
+          "Z": 1.05
+        }
+      },
+      "Engine": {
+        "MaxTorqueNm": 390,
+        "MaxRPM": 6800,
+        "ChangeUpRPM": 6400,
+        "ChangeDownRPM": 2800,
+        "TorqueRpm": [
+          0,
+          1500,
+          3200,
+          5200,
+          6800
+        ],
+        "TorqueScale": [
+          0.62,
+          0.9,
+          1.0,
+          0.93,
+          0.76
+        ],
+        "FinalRatio": 3.8,
+        "Gears": [
+          3.3,
+          2.2,
+          1.6,
+          1.22,
+          0.98,
+          0.8
+        ],
+        "RevUpMOI": 6.0
+      },
+      "Wheels": {
+        "RadiusCm": 36,
+        "WidthCm": 24,
+        "RideHzFront": 1.6,
+        "RideHzRear": 1.7,
+        "DampingRatio": 0.48,
+        "MaxRaiseCm": 14,
+        "MaxDropCm": 15,
+        "FrictionFront": 2.15,
+        "FrictionRear": 2.2,
+        "BrakeTorqueFront": 2700,
+        "BrakeTorqueRear": 1600,
+        "HandbrakeTorque": 3600,
+        "bTractionControlFront": true,
+        "bTractionControlRear": true,
+        "RollbarScaling": 0.45
+      },
+      "Assist": {
+        "TopSpeedKmh": 245,
+        "GripG": 0.95,
+        "SteerSpeedRefKmh": 130,
+        "HighSpeedSteer": 0.36,
+        "SteerRise": 3.2,
+        "ThrottleRise": 3.2,
+        "YawDamping": 4.5,
+        "MaxSlipDeg": 38,
+        "PowerOversteer": 0.15,
+        "HandbrakeRearGrip": 0.45,
+        "HandbrakeYawKick": 1.2,
+        "GripRecoverSeconds": 0.6,
+        "AllowedRollDeg": 6.0,
+        "AntiRoll": 10.0,
+        "RollDamping": 1.7,
+        "OffroadGrip": 0.92,
+        "AirControl": 2.0,
+        "DownforceG": 0.08
+      },
+      "Camera": {
+        "ArmCm": 650,
+        "HeightCm": 170,
+        "BumpShakeDeg": 0.45
+      },
+      "Body": {
+        "CabinX": -15,
+        "CabinLength": 250,
+        "CabinWidth": 175,
+        "CabinHeight": 65
+      },
+      "Targets": {
+        "Accel0To100S": [
+          4.8,
+          5.8
+        ],
+        "TopSpeedKmh": [
+          230,
+          260
+        ],
+        "Brake100To0M": [
+          32,
+          40
+        ],
+        "LatG60": [
+          1.0,
+          1.25
+        ],
+        "LatG120": [
+          1.0,
+          1.3
+        ],
+        "MaxRollDeg": [
+          1.5,
+          7.5
+        ],
+        "SlalomYawGain": [
+          35,
+          95
+        ],
+        "DriftEntryS": [
+          null,
+          1.0
+        ],
+        "DriftRecoverS": [
+          null,
+          1.5
+        ],
+        "DriftPeakSlipDeg": [
+          15,
+          50
+        ],
+        "Spins": [
+          null,
+          0
+        ],
+        "CamJitterDeg": [
+          null,
+          0.08
+        ],
+        "RoughMaxRollDeg": [
+          null,
+          10
+        ],
+        "SlalomLagS": [
+          null,
+          0.2
+        ],
+        "HandsOffRecoverS": [
+          null,
+          1.8
+        ],
+        "BrakeLockPct": [
+          null,
+          5
+        ]
+      }
+    }
+  }
+}

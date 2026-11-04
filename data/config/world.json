@@ -79,6 +79,10 @@
   "lut_y0_m": -90000,
   "lut_y1_m": 90000,
   "lut_step_m": 25,
+  "max_carriageway_overlaps": 0,
+  "service_overlap_budget_m2": 2500,
+  "service_overlap_max_m2": 700,
+  "max_thin_beside_road": 50,
   "landscape_target_spacing_m": 8.0,
   "landscape_quads_per_section": 63,
   "landscape_sections_per_component": 1,
@@ -88,6 +92,7 @@
   "min_harbour_width_m": 1000,
   "target_long_axis_min_m": 15000,
   "target_long_axis_max_m": 25000,
+  "max_building_road_overlaps": 43,
   "places": [
     {"id": "Central", "name_zh": "中環", "kind": "district", "lon": 114.1583, "lat": 22.2849, "hotkey": "One", "cars": 3},
     {"id": "WanChai", "name_zh": "灣仔", "kind": "district", "lon": 114.1733, "lat": 22.2775, "hotkey": "Two", "cars": 1},

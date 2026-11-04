@@ -23,6 +23,7 @@ public:
 
 	bool IsMapOpen() const { return bMapOpen; }
 	bool IsHelpVisible() const { return bShowHelp; }
+	bool IsMinimapZoomed() const { return bMinimapZoomed; }
 	int32 GetQualityIndex() const { return QualityIndex; }
 
 	void TeleportToPlace(const FString& PlaceId);
@@ -40,11 +41,13 @@ private:
 	void TryMapClick();
 	void TryHotkeys();
 	void ExitVehicle();
+	static FRotator UprightRotation(const AActor* Actor, float Pitch);
 	AActor* FindRide() const;
 
 	void OnMove(const struct FInputActionValue& Value);
 	void OnMoveCompleted(const struct FInputActionValue& Value);
 	void OnLook(const struct FInputActionValue& Value);
+	void OnZoom(const struct FInputActionValue& Value);
 	void OnJumpStarted();
 	void OnJumpCompleted();
 	void OnSprintStarted();
@@ -63,6 +66,7 @@ private:
 	void OnHover();
 	void OnToggleMap();
 	void OnToggleHelp();
+	void OnToggleMinimapZoom();
 	void OnCycleQuality();
 
 	void PushDrive();
@@ -71,6 +75,8 @@ private:
 	TObjectPtr<UInputAction> MoveAction;
 	UPROPERTY()
 	TObjectPtr<UInputAction> LookAction;
+	UPROPERTY()
+	TObjectPtr<UInputAction> ZoomAction;
 	UPROPERTY()
 	TObjectPtr<UInputAction> JumpAction;
 	UPROPERTY()
@@ -95,6 +101,8 @@ private:
 	TObjectPtr<UInputAction> HelpAction;
 	UPROPERTY()
 	TObjectPtr<UInputAction> QualityAction;
+	UPROPERTY()
+	TObjectPtr<UInputAction> MinimapZoomAction;
 
 	UPROPERTY()
 	TObjectPtr<UInputMappingContext> FootContext;
@@ -112,6 +120,7 @@ private:
 	bool bHandbrakeHeld = false;
 	bool bMapOpen = false;
 	bool bShowHelp = true;
+	bool bMinimapZoomed = true;
 	int32 QualityIndex = 1;
 	bool bMappingsApplied = false;
 };

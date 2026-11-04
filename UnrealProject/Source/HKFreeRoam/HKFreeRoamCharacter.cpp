@@ -63,6 +63,7 @@ AHKFreeRoamCharacter::AHKFreeRoamCharacter()
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetCapsuleComponent());
 	FrameCamera(CameraBoom, DefaultCapsuleHalfHeight * 2.f);
+	BaseArmLength = CameraBoom->TargetArmLength;
 	CameraBoom->bUsePawnControlRotation = true;
 	CameraBoom->bEnableCameraLag = true;
 	CameraBoom->CameraLagSpeed = 12.f;
@@ -130,6 +131,8 @@ bool AHKFreeRoamCharacter::ApplyAvatar()
 	BodyVisual->SetHiddenInGame(true);
 
 	FrameCamera(CameraBoom, Height);
+	BaseArmLength = CameraBoom->TargetArmLength;
+	CameraBoom->TargetArmLength = BaseArmLength * Zoom; // keep the player's zoom
 
 	UE_LOG(LogHK, Log, TEXT("Player: avatar %s (%.0f cm, scale %.3f, outline %s)"),
 		*Avatar->SourceFile, Height, Avatar->MeshScale, Avatar->OutlineMaterial ? TEXT("on") : TEXT("off"));
@@ -144,6 +147,21 @@ UHKPlayerAvatar* AHKFreeRoamCharacter::GetAvatar() const
 float AHKFreeRoamCharacter::GetGroundLift() const
 {
 	return GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + GroundClearance;
+}
+
+void AHKFreeRoamCharacter::AddCameraZoom(float Notches)
+{
+	ZoomTarget = FMath::Clamp(ZoomTarget * FMath::Pow(0.88f, Notches), 0.45f, 2.5f);
+}
+
+void AHKFreeRoamCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!FMath::IsNearlyEqual(Zoom, ZoomTarget, 1e-4f))
+	{
+		Zoom += (ZoomTarget - Zoom) * (1.f - FMath::Exp(-8.f * DeltaSeconds));
+		CameraBoom->TargetArmLength = BaseArmLength * Zoom;
+	}
 }
 
 void AHKFreeRoamCharacter::SetSprinting(bool bInSprinting)

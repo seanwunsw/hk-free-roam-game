@@ -12,7 +12,7 @@ import math
 import numpy as np
 from scipy.spatial import cKDTree
 
-from tools.pipeline.roads import tangents
+from tools.pipeline.roads import lane_layout, tangents
 
 HEADROOM_M = 4.0
 STEP_TOLERANCE_M = 0.3
@@ -118,6 +118,12 @@ class SurfaceIndex:
 
 
 CAR_HALF_WIDTH_M = 1.0
+# HKCar wheel offsets (±135, ±80 cm), radius 34 cm with the hub 34 cm up: the
+# actor origin is the wheel contact plane.
+WHEEL_X_M = 1.35
+WHEEL_Y_M = 0.80
+REST_EPS_M = 0.02
+MAX_WHEEL_GAP_M = 0.08
 PLAYER_GAP_M = 3.0
 # Car half-length 2.3 m plus margin and the 4 m sample spacing.
 JUNCTION_CLEAR_M = 4.5
@@ -158,15 +164,59 @@ def build_spawns(config, warp, roads: list[dict], index: SurfaceIndex, find_pad,
         t = tans[r][i]
         return math.degrees(math.atan2(t[1], t[0]))
 
+    layouts = [lane_layout(r) for r in ground]
+
     def lane_offset(r: int, i: int) -> float:
         """Left-of-heading offset of the car from the centreline.
 
-        Hong Kong drives on the left, so a parked car sits in the left lane: half the
-        left half-width, kept at least CAR_HALF_WIDTH_M + 0.2 m inside the ribbon edge.
-        Narrow roads (one lane) keep the car on the centreline.
+        Cars always face along the point order, which on a one-way road is the
+        legal direction (extract_osm reverses oneway=-1 ways). Hong Kong drives on
+        the left, so the car takes the leftmost lane of the carriageway that
+        travels that way: the block left of the direction split, or the block
+        right of it where a merged opposite carriageway lies on the left. The body
+        stays CAR_HALF_WIDTH_M + 0.2 m inside the ribbon edges.
         """
-        hl = float(ground[r]["hl"][i])
-        return max(0.0, min(0.5 * hl, hl - CAR_HALF_WIDTH_M - 0.2))
+        road = ground[r]
+        # Narrowest half-width over the neighbouring points, so a car next to a
+        # width change (merge widening) still fits on both sides.
+        lo, hi = max(i - 1, 0), min(i + 2, len(road["hl"]))
+        hl = float(np.min(road["hl"][lo:hi]))
+        hr = float(np.min(road["hr"][lo:hi]))
+        width, split, lanes_l, lanes_r = (float(layouts[r][0][i]), float(layouts[r][1][i]), int(layouts[r][2][i]), int(layouts[r][3][i]))
+        own_right = road.get("oneway") and int(road.get("own_r", 0)) == 0 and bool(road["opp_l"][i]) and not bool(road["opp_r"][i])
+        if own_right and lanes_r > 0:
+            lane_w = (width - split) / lanes_r
+            from_left = split + 0.5 * lane_w
+        else:
+            lane_w = split / max(lanes_l, 1)
+            from_left = 0.5 * lane_w
+        off = hl - from_left
+        margin = CAR_HALF_WIDTH_M + 0.2
+        off = min(off, hl - margin)
+        off = max(off, -(hr - margin))
+        if hl + hr < 2 * margin:
+            off = 0.5 * (hl - hr)
+        return off
+
+    def rest_pose(x: float, y: float, yaw: float, road_z: float):
+        """Wheel contact heights at the four wheel points on the top surface near
+        the road; pitch from the front/rear axle mean (no roll) and the car origin
+        (wheel bottoms) at the highest contact after pitching, plus REST_EPS_M,
+        so every wheel touches or sits a hair above the surface."""
+        t = np.array([math.cos(math.radians(yaw)), math.sin(math.radians(yaw))])
+        n = np.array([-t[1], t[0]])
+        heights = {}
+        for a in (WHEEL_X_M, -WHEEL_X_M):
+            for b in (WHEEL_Y_M, -WHEEL_Y_M):
+                px, py = np.array([x, y]) + t * a + n * b
+                h, on_road = index.top_surface(float(px), float(py), near_z=road_z + 0.2)
+                heights[(a, b)] = h
+        front = 0.5 * (heights[(WHEEL_X_M, WHEEL_Y_M)] + heights[(WHEEL_X_M, -WHEEL_Y_M)])
+        rear = 0.5 * (heights[(-WHEEL_X_M, WHEEL_Y_M)] + heights[(-WHEEL_X_M, -WHEEL_Y_M)])
+        pitch = math.atan2(front - rear, 2 * WHEEL_X_M)
+        z = max(h - a * math.tan(pitch) for (a, _), h in heights.items()) + REST_EPS_M
+        gap = max(z + a * math.tan(pitch) - h for (a, _), h in heights.items())
+        return z, math.degrees(pitch), gap
 
     def car_spot(r: int, i: int):
         road = ground[r]
@@ -176,12 +226,21 @@ def build_spawns(config, warp, roads: list[dict], index: SurfaceIndex, find_pad,
         x, y = road["xy"][i] + left * lane_offset(r, i)
         if in_junction(r, float(x), float(y), yaw):
             return None
+        # The nearest centreline point must belong to this road, otherwise the
+        # spot is where pieces overlap or run side by side.
+        _, j = tree.query([x, y])
+        if owner[j] != r:
+            return None
         z, on_road = index.top_surface(x, y, near_z=float(road["center"][i, 2]))
         if not on_road:
             return None
         if not index.clear(_footprint(x, y, yaw, 2.3, CAR_HALF_WIDTH_M), z):
             return None
-        return float(x), float(y), z, yaw
+        rz, pitch, gap = rest_pose(float(x), float(y), yaw, z)
+        # No roll: reject cross-fall or twisted spots where a wheel would hang.
+        if abs(pitch) > 10.0 or gap > MAX_WHEEL_GAP_M:
+            return None
+        return float(x), float(y), rz, yaw, pitch, gap
 
     def player_spot(r: int, i: int):
         """A spot PLAYER_GAP_M beside the car, kerb side (left) first, on the road edge
@@ -266,6 +325,7 @@ def build_spawns(config, warp, roads: list[dict], index: SurfaceIndex, find_pad,
                 continue
             r, i, first_car, _ = anchor
             placed = [first_car]
+            rr_of = [r]
             # Further slots: along the same road first, then the next nearest
             # clear road points, keeping cars at least 8 m apart.
             options = [(r, j) for j in range(i + 6, len(ground[r]["xy"]), 6)]
@@ -281,8 +341,13 @@ def build_spawns(config, warp, roads: list[dict], index: SurfaceIndex, find_pad,
                 if math.hypot(spot[0] - person[0], spot[1] - person[1]) < 3.0:
                     continue
                 placed.append(spot)
-            for slot, (x, y, z, cyaw) in enumerate(placed):
-                cars.append({"id": f"{place['id']}_{slot}", "place": place["id"], "x_m": x, "y_m": y, "z_m": z, "yaw_deg": cyaw})
+                rr_of.append(rr)
+            for slot, (x, y, z, cyaw, pitch, gap) in enumerate(placed):
+                cars.append({
+                    "id": f"{place['id']}_{slot}", "place": place["id"], "x_m": x, "y_m": y, "z_m": z,
+                    "yaw_deg": cyaw, "pitch_deg": round(pitch, 3), "wheel_gap_m": round(gap, 3),
+                    "oneway": bool(ground[rr_of[slot]].get("oneway")),
+                })
             if len(placed) < count:
                 notes.append(f"{place['id']} placed {len(placed)}/{count} cars")
     if player is None and places:
@@ -314,6 +379,7 @@ def nearby_centerlines(roads: list[dict], spawns: dict, radius_m: float = 60.0) 
             "xy": np.round(road["xy"], 3).tolist(),
             "hl": np.round(road["hl"], 3).tolist(),
             "hr": np.round(road["hr"], 3).tolist(),
+            "oneway": bool(road.get("oneway")),
         })
     return out
 
@@ -329,12 +395,12 @@ def spawn_lane_report(spawns: dict, centerlines: list[dict]) -> dict:
         hl = np.asarray(line["hl"], dtype=float)
         hr = np.asarray(line["hr"], dtype=float)
         for k in range(len(xy) - 1):
-            segs.append((xy[k], xy[k + 1], 0.5 * (hl[k] + hl[k + 1]), 0.5 * (hr[k] + hr[k + 1])))
+            segs.append((xy[k], xy[k + 1], 0.5 * (hl[k] + hl[k + 1]), 0.5 * (hr[k] + hr[k + 1]), bool(line.get("oneway"))))
     cars = []
     for car in spawns.get("cars", []):
         p = np.array([car["x_m"], car["y_m"]])
         best = None
-        for a, b, hl, hr in segs:
+        for a, b, hl, hr, oneway in segs:
             d = b - a
             length = float(np.hypot(*d))
             if length < 1e-6:
@@ -344,16 +410,20 @@ def spawn_lane_report(spawns: dict, centerlines: list[dict]) -> dict:
             dist = float(np.hypot(*(p - q)))
             if best is None or dist < best[0]:
                 side = float(d[0] * (p - a)[1] - d[1] * (p - a)[0]) / length
-                best = (dist, d / length, side, hl, hr)
+                best = (dist, d / length, side, hl, hr, oneway)
         if best is None:
             cars.append({"id": car["id"], "centerline_m": None})
             continue
-        dist, tan, side, hl, hr = best
+        dist, tan, side, hl, hr, oneway = best
         yaw = math.radians(car["yaw_deg"])
-        err = math.degrees(math.acos(min(1.0, abs(math.cos(yaw) * tan[0] + math.sin(yaw) * tan[1]))))
+        along = math.cos(yaw) * tan[0] + math.sin(yaw) * tan[1]
+        err = math.degrees(math.acos(min(1.0, abs(along))))
+        wrong_way = bool(oneway and along < 0)
         fits = (side + CAR_HALF_WIDTH_M <= hl + 0.05) and (-side + CAR_HALF_WIDTH_M <= hr + 0.05)
         cars.append({"id": car["id"], "centerline_m": round(dist, 3), "lateral_left_m": round(side, 3),
-                     "heading_err_deg": round(err, 2), "body_on_ribbon": bool(fits)})
+                     "heading_err_deg": round(err, 2), "body_on_ribbon": bool(fits),
+                     "oneway": bool(oneway), "wrong_way": wrong_way,
+                     "keeps_left": bool(oneway or side >= -0.05)})
     measured = [c for c in cars if c.get("centerline_m") is not None]
     player = spawns.get("player")
     first = next((c for c in spawns.get("cars", []) if c["id"].endswith("_0") and player and c["place"] == player["id"]), None)
@@ -366,6 +436,11 @@ def spawn_lane_report(spawns: dict, centerlines: list[dict]) -> dict:
         "max_centerline_m": max((c["centerline_m"] for c in measured), default=None),
         "max_heading_err_deg": max((c["heading_err_deg"] for c in measured), default=None),
         "body_off_ribbon": sum(1 for c in measured if not c["body_on_ribbon"]),
+        "oneway_cars": sum(1 for c in measured if c["oneway"]),
+        "wrong_way": sum(1 for c in measured if c["wrong_way"]),
+        "right_of_centre_on_two_way": sum(1 for c in measured if not c["keeps_left"]),
+        "max_wheel_gap_m": max((c.get("wheel_gap_m", 0.0) for c in spawns.get("cars", [])), default=None),
+        "max_abs_pitch_deg": max((abs(c.get("pitch_deg", 0.0)) for c in spawns.get("cars", [])), default=None),
         "player_to_first_car_m": gap,
         "detail": cars,
     }
