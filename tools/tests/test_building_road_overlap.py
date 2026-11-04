@@ -72,3 +72,88 @@ def test_elevated_roof_over_a_bridge_is_removed():
     bridge = _road(-60.0, 0.0, 60.0, 0.0, mode="bridge", deck=10.0)
     canopy = _building([[-30, -5], [30, -5], [30, 5], [-30, 5]], z=0.0, height=4.0, elevated=True)
     assert bw.clip_under_bridges([canopy], [bridge], _log) == []
+
+
+def test_noise_enclosure_roof_over_motorway_leaves_no_median_wall():
+    # Tuen Mun Road at 22.3800 N 113.9835 E: r14438730 (building=roof, building:min_level=2,
+    # roof=noise_barrier) spans one carriageway plus the 0.8 m median. Cutting the padded
+    # ribbon out left a 0.7 x 8 m strip that was extruded 4 m from the ground on the median.
+    import shapely
+
+    roof = [[-40, -6], [40, -6], [40, 1.2], [-40, 1.2]]
+    cutter = shapely.Polygon([[-60, -4.5], [60, -4.5], [60, 0.4], [-60, 0.4]])
+    out = bw.cut_buildings([_building(roof, height=4.0, elevated=True)], [cutter], shapely.STRtree([cutter]), _log)
+    assert out == []
+
+
+def test_cut_remnant_thinner_than_sliver_limit_is_dropped():
+    import shapely
+
+    block = [[-10, 0], [10, 0], [10, 11.5], [-10, 11.5]]
+    cutter = shapely.Polygon([[-30, -5], [30, -5], [30, 10], [-30, 10]])
+    out = bw.cut_buildings([_building(block)], [cutter], shapely.STRtree([cutter]), _log)
+    assert out == []
+    wide = [[-10, 0], [10, 0], [10, 16], [-10, 16]]
+    out = bw.cut_buildings([_building(wide)], [cutter], shapely.STRtree([cutter]), _log)
+    assert len(out) == 1
+
+
+def test_road_ending_inside_a_footprint_does_not_fill_back_in():
+    """Stage IGC: a covered road running into a block leaves a hole that extruding the
+    exterior ring would cover again. The cut must open the building over it."""
+    import shapely
+
+    road = _road(-5.0, 0.0, 60.0, 0.0)
+    block = _building([[-40, -30], [40, -30], [40, 30], [-40, 30]])
+    cutters = [shapely.make_valid(shapely.polygons(r)) for r in rn.edge_polygons([road], bw.CUT_PAD_M)]
+    out = bw.cut_buildings([block], cutters, shapely.STRtree(cutters), _log)
+    assert out
+    assert bw.building_road_overlap(out, [road])["carriageway"]["buildings"] == 0
+    # Both arms beside the passage survive as separate buildings.
+    assert sum(b["area"] for b in out) > 0.8 * 80 * 60 - 65 * 20
+
+
+def test_road_through_a_courtyard_is_cleared():
+    import shapely
+
+    road = _road(-10.0, 0.0, 10.0, 0.0)
+    block = _building([[-30, -30], [30, -30], [30, 30], [-30, 30]])
+    cutters = [shapely.make_valid(shapely.polygons(r)) for r in rn.edge_polygons([road], bw.CUT_PAD_M)]
+    out = bw.cut_buildings([block], cutters, shapely.STRtree(cutters), _log)
+    assert bw.building_road_overlap(out, [road])["ground"]["buildings"] == 0
+    for b in out:
+        assert shapely.Polygon(b["ring"]).is_valid
+
+
+def test_overlap_checks_fail_on_carriageway_and_warn_on_service():
+    clean = {"carriageway": {"buildings": 0}, "bridge": {"buildings": 0}, "service": {"area_m2": 100.0, "max_m2": 50.0}, "thin_beside_road": 3}
+    ok, warnings = bw.overlap_checks(clean, {})
+    assert ok and not warnings
+    ok, _ = bw.overlap_checks(dict(clean, carriageway={"buildings": 1}), {})
+    assert not ok
+    ok, warnings = bw.overlap_checks(dict(clean, service={"area_m2": 3000.0, "max_m2": 800.0}, thin_beside_road=60), {})
+    assert ok and len(warnings) == 3
+
+
+def test_service_road_counts_apart_from_carriageway():
+    xy = rn.resample(np.array([[-30.0, 0.0], [30.0, 0.0]]))
+    lane = rn.make_road(xy, np.zeros(len(xy)), "service", 1, "ground", 0, 1.0)
+    lane["center"] = np.column_stack([xy, np.zeros(len(xy))])
+    podium = _building([[-10, -10], [10, -10], [10, 10], [-10, 10]])
+    result = bw.building_road_overlap([podium], [lane])
+    assert result["carriageway"]["buildings"] == 0
+    assert result["service"]["buildings"] == 1
+
+
+def test_tight_bend_cutter_covers_the_inside_of_the_bend():
+    """A hairpin tighter than the half width loops the outline ring; the cutter must still
+    cover the whole swept ribbon."""
+    import shapely
+
+    xy = rn.resample(np.array([[-40.0, 0.0], [0.0, 0.0], [4.0, 3.0], [0.0, 6.0], [-40.0, 6.0]]))
+    road = rn.make_road(xy, np.zeros(len(xy)), "residential", 2, "ground", 0, 1.0)
+    road["center"] = np.column_stack([xy, np.zeros(len(xy))])
+    house = _building([[-6, 1], [0, 1], [0, 5], [-6, 5]])
+    buffers, tree = bw._road_buffers([road], _log)
+    out = bw.cut_buildings([house], buffers, tree, _log)
+    assert bw.building_road_overlap(out, [road])["carriageway"]["buildings"] == 0

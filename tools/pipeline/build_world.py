@@ -341,7 +341,11 @@ def extract_osm(path: Path, log: Log) -> dict:
                         except ValueError:
                             lanes = None
                     layer = _layer_value(tags)
-                    tunnel = _truthy(tags.get("tunnel")) or layer < 0
+                    # tunnel=building_passage and covered=yes run at grade under a building (Stage
+                    # IGC over Lin Cheung Road, Sceneway Plaza). They are ground roads: an open cut
+                    # would trench them, and cut_buildings opens the building over them.
+                    covered = tags.get("tunnel") == "building_passage" or tags.get("covered") in {"yes", "arcade"}
+                    tunnel = (_truthy(tags.get("tunnel")) or layer < 0) and not covered
                     bridge = _truthy(tags.get("bridge")) or layer > 0
                     roads.append(
                         {
@@ -352,6 +356,7 @@ def extract_osm(path: Path, log: Log) -> dict:
                             "bridge": bridge and not tunnel,
                             "layer": layer,
                             "oneway": direction != 0,
+                            "covered": covered,
                         }
                     )
                 elif tags.get("natural") == "coastline":
@@ -779,16 +784,56 @@ def prepare_roads(warp, extracted, height, landscape, log: Log) -> list[dict]:
     return prepared
 
 
+def _segment_outline(road: dict, pad: float):
+    """Union of per-segment quads plus vertex discs: a tight bend folds the single outline
+    ring into a bow tie, and make_valid then drops the inside of the bend, leaving road the
+    cutter misses (five residential bends kept 32 m2 of buildings on the carriageway)."""
+    import shapely
+
+    xy = road["xy"]
+    normals = roadnet.left_normals(xy)
+    left = xy + normals * (road["hl"] + pad)[:, None]
+    right = xy - normals * (road["hr"] + pad)[:, None]
+    quads = [shapely.polygons(np.array([left[k], left[k + 1], right[k + 1], right[k]])) for k in range(len(xy) - 1)]
+    radius = np.maximum(road["hl"], road["hr"]) + pad
+    discs = [shapely.buffer(shapely.points(xy[k]), float(radius[k]), quad_segs=4) for k in range(1, len(xy) - 1)]
+    return shapely.union_all(shapely.make_valid(np.asarray(quads + discs, dtype=object)))
+
+
+def _ribbon_polys(roads: list[dict], pad: float) -> list:
+    """One polygon per road piece covering its ribbon plus pad. The single outline ring is
+    used when it is simple and neither offset edge runs backwards; on a bend tighter than
+    the half width it folds (invalid) or loops (valid but missing the inside of the bend)."""
+    import shapely
+
+    out = []
+    for road in roads:
+        xy = road["xy"]
+        normals = roadnet.left_normals(xy)
+        left = xy + normals * (road["hl"] + pad)[:, None]
+        right = xy - normals * (road["hr"] + pad)[:, None]
+        along = np.diff(xy, axis=0)
+        folds = bool(
+            np.any(np.einsum("ij,ij->i", np.diff(left, axis=0), along) <= 0.0)
+            or np.any(np.einsum("ij,ij->i", np.diff(right, axis=0), along) <= 0.0)
+        )
+        poly = shapely.polygons(np.vstack([left, right[::-1]]))
+        if folds or not poly.is_valid:
+            poly = _segment_outline(road, pad)
+        if poly is not None and not poly.is_empty:
+            out.append(poly)
+    return out
+
+
 def _road_buffers(roads: list[dict], log: Log):
     """Drivable ribbon outlines (with their merged widths) plus 1.5 m, for cutting buildings."""
     import shapely
 
-    rings = roadnet.edge_polygons(roads, 1.5)
-    if not rings:
+    pieces = [road for road in roads if road["mode"] != "bridge" and len(road["xy"]) >= 2]
+    if not pieces:
         return [], None
-    log(f"outlining {len(rings)} drivable ribbons")
-    polys = shapely.make_valid(np.asarray([shapely.polygons(ring) for ring in rings], dtype=object))
-    buffers = [geom for geom in polys if geom is not None and not geom.is_empty]
+    log(f"outlining {len(pieces)} drivable ribbons")
+    buffers = _ribbon_polys(pieces, CUT_PAD_M)
     tree = shapely.STRtree(buffers)
     return buffers, tree
 
@@ -826,36 +871,129 @@ def cut_buildings(buildings: list[dict], buffers, tree, log: Log) -> list[dict]:
     kept = []
     cut = 0
     removed = 0
+    canopies = 0
+    slivers = 0
+    split = 0
     for index, building in enumerate(buildings):
         chosen = hits.get(index)
         if not chosen:
             kept.append(building)
             continue
         cutter = buffers[chosen[0]] if len(chosen) == 1 else shapely.union_all([buffers[item] for item in chosen])
+        if _canopy_over_road(building, geoms[index], cutter):
+            canopies += 1
+            continue
         diff = shapely.difference(geoms[index], cutter)
-        ring = largest_ring(diff)
-        if ring is None or abs(signed_area(ring)) < 3.0:
+        rings = []
+        for piece in _solid_pieces(diff):
+            for ring in _cut_rings(piece, cutter):
+                if _too_thin(ring):
+                    slivers += 1
+                    continue
+                rings.append(ring)
+        rings.sort(key=lambda r: -abs(signed_area(r)))
+        # The largest piece always stays; the others (the far side of a road through the
+        # footprint, the arms of a block a covered road runs under) only if they are buildings.
+        rings = rings[:1] + [r for r in rings[1:] if abs(signed_area(r)) >= EXTRA_PIECE_M2]
+        if not rings:
             removed += 1
             continue
-        ring = _cut_ring(ring, cutter)
-        if ring is None:
-            removed += 1
-            continue
-        building = dict(building)
-        building["ring"] = ring
-        building["area"] = abs(signed_area(ring))
-        building["cx"] = float(ring[:, 0].mean())
-        building["cy"] = float(ring[:, 1].mean())
-        kept.append(building)
+        if len(rings) > 1:
+            split += 1
+        for ring in rings:
+            piece = dict(building)
+            piece["ring"] = ring
+            piece["area"] = abs(signed_area(ring))
+            piece["cx"] = float(ring[:, 0].mean())
+            piece["cy"] = float(ring[:, 1].mean())
+            kept.append(piece)
         cut += 1
-    log(f"cut {cut} footprints  removed {removed}  remaining {len(kept)}")
+    log(
+        f"cut {cut} footprints  removed {removed}  elevated canopies over roads {canopies}  "
+        f"slivers {slivers}  split into pieces {split}  remaining {len(kept)}"
+    )
     return kept
 
 
 CUT_PAD_M = 1.5
+SLIVER_M = 2.0
+CANOPY_COVER = 0.3
+EXTRA_PIECE_M2 = 25.0
+HOLE_SPLIT_DEPTH = 6
 
 
-def _cut_ring(ring: np.ndarray, cutter) -> np.ndarray | None:
+def _polygons_of(geom) -> list:
+    if geom is None or geom.is_empty:
+        return []
+    kind = geom.geom_type
+    if kind == "Polygon":
+        return [geom]
+    if kind in {"MultiPolygon", "GeometryCollection"}:
+        return [p for item in geom.geoms for p in _polygons_of(item)]
+    return []
+
+
+def _solid_pieces(geom, min_m2: float = 3.0, depth: int = 0) -> list[np.ndarray]:
+    """Hole-free CCW rings covering a cut footprint.
+
+    Buildings are extruded from their exterior ring only, so a road that ends inside a
+    footprint or runs under it (covered=yes, tunnel=building_passage) leaves a hole that the
+    extrusion fills in again: Stage IGC put 602 m2 back on Lin Cheung Road. Split each
+    polygon with a hole through the hole, across its long side, until no holes remain."""
+    import shapely
+
+    out = []
+    for poly in _polygons_of(geom):
+        if poly.area < min_m2:
+            continue
+        holes = [h for h in poly.interiors if shapely.Polygon(h).area >= 0.5]
+        if not holes or depth >= HOLE_SPLIT_DEPTH:
+            ring = np.asarray(poly.exterior.coords, dtype=np.float64)[:-1]
+            if len(ring) >= 3:
+                ring = ensure_ccw(clean_ring(ring, 0.15))
+                if len(ring) >= 3 and abs(signed_area(ring)) >= min_m2:
+                    out.append(ring)
+            continue
+        hole = max(holes, key=lambda h: shapely.Polygon(h).area)
+        c = shapely.Polygon(hole).centroid
+        minx, miny, maxx, maxy = poly.bounds
+        if maxx - minx >= maxy - miny:
+            halves = (shapely.box(minx - 1, miny - 1, c.x, maxy + 1), shapely.box(c.x, miny - 1, maxx + 1, maxy + 1))
+        else:
+            halves = (shapely.box(minx - 1, miny - 1, maxx + 1, c.y), shapely.box(minx - 1, c.y, maxx + 1, maxy + 1))
+        for half in halves:
+            out.extend(_solid_pieces(shapely.intersection(poly, half), min_m2, depth + 1))
+    return out
+
+
+def _too_thin(ring: np.ndarray) -> bool:
+    """A cut remnant narrower than SLIVER_M (short side of its minimum rotated
+    rectangle) is the strip of footprint left between two carriageways or along a kerb.
+    Extruded, it is a wall standing on the road edge."""
+    import shapely
+
+    box = shapely.minimum_rotated_rectangle(shapely.polygons(np.asarray(ring, dtype=np.float64)))
+    if box.geom_type != "Polygon":
+        return True
+    e = np.asarray(box.exterior.coords)
+    return min(float(np.linalg.norm(e[1] - e[0])), float(np.linalg.norm(e[2] - e[1]))) < SLIVER_M
+
+
+def _canopy_over_road(building: dict, poly, cutter) -> bool:
+    """Elevated structures (building=roof canopies, noise-barrier enclosures, min_level>0)
+    are extruded from the ground, so any part left beside the road becomes a wall.
+    Drop a roof that touches a road, and any other elevated footprint that is mostly road."""
+    import shapely
+
+    if not building.get("elevated"):
+        return False
+    if building.get("kind") == "roof":
+        return True
+    area = float(poly.area)
+    return area > 0.0 and float(shapely.intersection(poly, cutter).area) / area >= CANOPY_COVER
+
+
+def _cut_rings(ring: np.ndarray, cutter) -> list[np.ndarray]:
     """Simplify a cut footprint without letting it grow back over the road.
 
     _simplify_ring's last resort keeps every k-th vertex, which chords straight across
@@ -869,11 +1007,8 @@ def _cut_ring(ring: np.ndarray, cutter) -> np.ndarray | None:
         if len(out) <= 16:
             break
     if out is None or len(out) < 3:
-        return None
-    again = largest_ring(shapely.difference(shapely.make_valid(shapely.polygons(out)), cutter))
-    if again is None or abs(signed_area(again)) < 3.0:
-        return None
-    return ensure_ccw(clean_ring(again, 0.15))
+        return []
+    return _solid_pieces(shapely.difference(shapely.make_valid(shapely.polygons(out)), cutter))
 
 
 BRIDGE_DECK_M = 1.0
@@ -922,14 +1057,13 @@ def clip_under_bridges(buildings: list[dict], roads: list[dict], log: Log) -> li
         if not bad:
             kept.append(building)
             continue
-        ring = largest_ring(shapely.difference(poly, shapely.union_all(bad)))
-        if ring is None or abs(signed_area(ring)) < 3.0:
+        cutter = shapely.union_all(bad)
+        rings = [r for piece in _solid_pieces(shapely.difference(poly, cutter)) for r in _cut_rings(piece, cutter)]
+        rings = [r for r in rings if not _too_thin(r)]
+        if not rings:
             dropped += 1
             continue
-        ring = _cut_ring(ensure_ccw(clean_ring(ring, 0.15)), shapely.union_all(bad))
-        if ring is None:
-            dropped += 1
-            continue
+        ring = max(rings, key=lambda r: abs(signed_area(r)))
         building = dict(building)
         building["ring"] = ring
         building["area"] = abs(signed_area(ring))
@@ -941,19 +1075,38 @@ def clip_under_bridges(buildings: list[dict], roads: list[dict], log: Log) -> li
     return kept
 
 
+CARRIAGEWAY_CLASSES = frozenset(
+    (
+        "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary",
+        "secondary_link", "tertiary", "tertiary_link", "residential", "unclassified", "living_street",
+    )
+)
+
+
 def building_road_overlap(buildings: list[dict], roads: list[dict], min_m2: float = 1.0) -> dict:
     """Bake-report check: drivable ribbon area (no pad) covered by a building whose
     vertical span contains the road surface. Ground and tunnel ribbons count wherever
-    they meet a footprint; bridge decks only where the deck is inside the building."""
+    they meet a footprint; bridge decks only where the deck is inside the building.
+
+    "ground" is split by class: "carriageway" (through roads, hard check) and "service"
+    (driveways, car-park lanes and estate roads that OSM itself draws under podiums)."""
     import shapely
 
     polys = [shapely.make_valid(shapely.polygons(np.asarray(b["ring"], dtype=np.float64))) for b in buildings]
-    ground = [shapely.make_valid(shapely.polygons(r)) for r in streetscape.ribbon_outlines(roads, 0.0, ("ground", "tunnel"))]
+    flat = [r for r in roads if r["mode"] in ("ground", "tunnel") and len(r["xy"]) >= 2]
+    ground = _ribbon_polys(flat, 0.0)
+    carriage = [g for g, r in zip(ground, flat) if r.get("highway") in CARRIAGEWAY_CLASSES]
+    service = [g for g, r in zip(ground, flat) if r.get("highway") not in CARRIAGEWAY_CLASSES]
     quads, decks = _bridge_segments(roads, 0.0)
     out = {}
-    for name, cutters, zs in (("ground", ground, None), ("bridge", quads, decks)):
+    for name, cutters, zs in (
+        ("ground", ground, None),
+        ("carriageway", carriage, None),
+        ("service", service, None),
+        ("bridge", quads, decks),
+    ):
         if not cutters or not polys:
-            out[name] = {"buildings": 0, "area_m2": 0.0, "max_m2": 0.0}
+            out[name] = {"buildings": 0, "area_m2": 0.0, "max_m2": 0.0, "worst": []}
             continue
         tree = shapely.STRtree(cutters)
         hit_b, hit_c = tree.query(polys, predicate="intersects")
@@ -964,11 +1117,51 @@ def building_road_overlap(buildings: list[dict], roads: list[dict], min_m2: floa
                 if not (building["z"] - 0.5 <= zs[int(c)] <= building["z"] + building["height"]):
                     continue
             groups[int(b)].append(int(c))
-        areas = [float(shapely.intersection(polys[b], shapely.union_all([cutters[c] for c in cs])).area) for b, cs in groups.items()]
-        areas = [a for a in areas if a >= min_m2]
-        out[name] = {"buildings": len(areas), "area_m2": round(float(sum(areas)), 1), "max_m2": round(float(max(areas, default=0.0)), 1)}
+        hits = []
+        for b, cs in groups.items():
+            area = float(shapely.intersection(polys[b], shapely.union_all([cutters[c] for c in cs])).area)
+            if area >= min_m2:
+                hits.append((area, b))
+        hits.sort(reverse=True)
+        out[name] = {
+            "buildings": len(hits),
+            "area_m2": round(float(sum(a for a, _ in hits)), 1),
+            "max_m2": round(float(hits[0][0]) if hits else 0.0, 1),
+            "worst": [
+                {"area_m2": round(a, 1), "x_m": round(buildings[b]["cx"], 1), "y_m": round(buildings[b]["cy"], 1), "kind": buildings[b].get("kind")}
+                for a, b in hits[:5]
+            ],
+        }
     out["buildings"] = out["ground"]["buildings"] + out["bridge"]["buildings"]
+    thin = [i for i, b in enumerate(buildings) if _too_thin(b["ring"])]
+    near = 0
+    if thin and ground:
+        tree = shapely.STRtree(ground)
+        hit, _ = tree.query([polys[i] for i in thin], predicate="dwithin", distance=CUT_PAD_M)
+        near = len(set(int(h) for h in hit))
+    out["thin_beside_road"] = near
     return out
+
+
+def overlap_checks(overlap: dict, config: dict) -> tuple[bool, list[str]]:
+    """Hard check on carriageways and bridge decks; warnings for service roads and slivers."""
+    carriage = overlap.get("carriageway") or {}
+    bridge = overlap.get("bridge") or {}
+    service = overlap.get("service") or {}
+    hard = int(carriage.get("buildings", 0)) + int(bridge.get("buildings", 0))
+    ok = hard <= int(config.get("max_carriageway_overlaps", 0))
+    warnings = []
+    if not ok:
+        warnings.append(f"buildings over carriageways {carriage.get('buildings', 0)}, over bridge decks {bridge.get('buildings', 0)}")
+    if float(service.get("area_m2", 0.0)) > float(config.get("service_overlap_budget_m2", 2500.0)):
+        warnings.append(f"service-road overlap {service.get('area_m2')} m2 over budget")
+    if float(service.get("max_m2", 0.0)) > float(config.get("service_overlap_max_m2", 700.0)):
+        warnings.append(f"one building covers {service.get('max_m2')} m2 of service road")
+    if "max_building_road_overlaps" in config and int(overlap.get("buildings", 0)) > int(config["max_building_road_overlaps"]):
+        warnings.append(f"buildings over any drivable road {overlap.get('buildings')} above {config['max_building_road_overlaps']}")
+    if int(overlap.get("thin_beside_road", 0)) > int(config.get("max_thin_beside_road", 50)):
+        warnings.append(f"thin walls beside roads {overlap.get('thin_beside_road')}")
+    return ok, warnings
 
 
 def repair_rings(buildings: list[dict], log: Log) -> list[dict]:
@@ -1482,8 +1675,12 @@ def _write_previews(preview_dir: Path, warp, height, landscape, roads, coasts, p
     return written
 
 
-def _run_native_check(root: Path, log: Log) -> dict:
-    binary = Path("/tmp/test_hk_warp")
+def _run_native_check(root: Path, out: Path, log: Log) -> dict:
+    import os
+    import tempfile
+
+    scratch = tempfile.TemporaryDirectory(prefix="hk_warp_")
+    binary = Path(scratch.name) / ("test_hk_warp.exe" if os.name == "nt" else "test_hk_warp")
     source = root / "tools" / "tests" / "test_hk_warp.cpp"
     compile_cmd = [
         "g++",
@@ -1498,6 +1695,13 @@ def _run_native_check(root: Path, log: Log) -> dict:
         str(source),
     ]
     try:
+        return _compile_and_run(compile_cmd, binary, out, log)
+    finally:
+        scratch.cleanup()
+
+
+def _compile_and_run(compile_cmd: list[str], binary: Path, out: Path, log: Log) -> dict:
+    try:
         compiled = subprocess.run(compile_cmd, capture_output=True, text=True)
     except FileNotFoundError:
         log("native warp check skipped: g++ is not installed")
@@ -1506,7 +1710,7 @@ def _run_native_check(root: Path, log: Log) -> dict:
         log("native warp compile failed\n" + compiled.stderr)
         return {"compiled": False, "ok": False, "stderr": compiled.stderr[-2000:]}
     ran = subprocess.run(
-        [str(binary), str(root / "data" / "processed" / "warp_lut.bin"), str(root / "data" / "processed" / "golden_warp.csv")],
+        [str(binary), str(out / "warp_lut.bin"), str(out / "golden_warp.csv")],
         capture_output=True,
         text=True,
     )
@@ -1802,8 +2006,10 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
         and coast.get("land_above_0_pct", 0.0) >= 99.0
         and not coast.get("spawns_over_sea")
     )
-    overlap = built.get("building_road_overlap") or {}
-    overlap_ok = int(overlap.get("buildings", 0)) <= int(config.get("max_building_road_overlaps", 0))
+    overlap_ok, overlap_warnings = overlap_checks(built.get("building_road_overlap") or {}, config)
+    report["warnings"] = overlap_warnings
+    for warning in overlap_warnings:
+        log("WARNING " + warning)
     report["ok"] = bool(axis_ok and harbour_ok and native_ok and content_ok and coast_ok and overlap_ok)
     report["checks"] = {
         "long_axis": axis_ok,
@@ -1841,7 +2047,7 @@ def main(argv: list[str]) -> int:
         log("wrote warp lut and golden samples")
         # Queries after build() already read the same tables the file stores.
         built = build_real(root, config, warp, out, log)
-        native = _run_native_check(root, log)
+        native = _run_native_check(root, out, log)
         report = write_outputs(out, config, warp, built, native, started, log)
         return 0 if report["ok"] else 1
     except Exception:
