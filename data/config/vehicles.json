@@ -219,8 +219,8 @@
       "Wheels": {
         "RideHzFront": 1.9,
         "RideHzRear": 2.0,
-        "FrictionFront": 3.4,
-        "FrictionRear": 3.55,
+        "FrictionFront": 2.15,
+        "FrictionRear": 2.35,
         "BrakeTorqueFront": 2300,
         "BrakeTorqueRear": 1300,
         "HandbrakeTorque": 4000,
@@ -232,7 +232,7 @@
         "TopSpeedKmh": 260,
         "GripG": 1.0,
         "SteerSpeedRefKmh": 140,
-        "HighSpeedSteer": 0.34,
+        "HighSpeedSteer": 0.37,
         "SteerRise": 3.8,
         "ThrottleRise": 4.0,
         "YawDamping": 3.8,
@@ -264,16 +264,16 @@
           275
         ],
         "Brake100To0M": [
-          30,
-          42
+          32,
+          40
         ],
         "LatG60": [
-          0.9,
-          1.4
+          1.0,
+          1.25
         ],
         "LatG120": [
-          0.85,
-          1.4
+          1.0,
+          1.3
         ],
         "MaxRollDeg": [
           null,
@@ -331,7 +331,7 @@
         "FrontRearSplit": 0.0
       },
       "Engine": {
-        "MaxTorqueNm": 340,
+        "MaxTorqueNm": 300,
         "MaxRPM": 6800,
         "ChangeUpRPM": 6400,
         "ChangeDownRPM": 2800,
@@ -362,10 +362,10 @@
       "Wheels": {
         "RideHzFront": 2.1,
         "RideHzRear": 2.3,
-        "FrictionFront": 3.5,
-        "FrictionRear": 3.6,
-        "BrakeTorqueFront": 2100,
-        "BrakeTorqueRear": 1000,
+        "FrictionFront": 1.95,
+        "FrictionRear": 2.1,
+        "BrakeTorqueFront": 1800,
+        "BrakeTorqueRear": 850,
         "HandbrakeTorque": 3200,
         "bTractionControlFront": true,
         "bTractionControlRear": true,
@@ -374,7 +374,7 @@
       "Assist": {
         "TopSpeedKmh": 220,
         "GripG": 0.98,
-        "SteerSpeedRefKmh": 130,
+        "SteerSpeedRefKmh": 150,
         "HighSpeedSteer": 0.38,
         "SteerRise": 4.5,
         "SteerReturn": 7.0,
@@ -411,16 +411,16 @@
           230
         ],
         "Brake100To0M": [
-          30,
-          42
+          32,
+          40
         ],
         "LatG60": [
-          0.9,
-          1.4
+          1.0,
+          1.25
         ],
         "LatG120": [
-          0.82,
-          1.4
+          1.0,
+          1.3
         ],
         "MaxRollDeg": [
           null,
@@ -520,10 +520,10 @@
         "DampingRatio": 0.48,
         "MaxRaiseCm": 14,
         "MaxDropCm": 15,
-        "FrictionFront": 3.3,
-        "FrictionRear": 3.3,
-        "BrakeTorqueFront": 2700,
-        "BrakeTorqueRear": 1600,
+        "FrictionFront": 1.8,
+        "FrictionRear": 1.85,
+        "BrakeTorqueFront": 2200,
+        "BrakeTorqueRear": 1300,
         "HandbrakeTorque": 3600,
         "bTractionControlFront": true,
         "bTractionControlRear": true,
@@ -571,18 +571,18 @@
         ],
         "Brake100To0M": [
           32,
-          45
+          40
         ],
         "LatG60": [
-          0.88,
-          1.4
+          1.0,
+          1.25
         ],
         "LatG120": [
-          0.82,
-          1.4
+          1.0,
+          1.3
         ],
         "MaxRollDeg": [
-          2.0,
+          1.5,
           7.5
         ],
         "SlalomYawGain": [

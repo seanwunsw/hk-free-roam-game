@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -162,6 +163,8 @@ def test_fr_is_the_fast_accelerating_class():
     # before any model run: FR's slowest allowed 0-100 beats the quickest allowed for AWD and FF.
     targets = {name: spec["Targets"]["Accel0To100S"] for name, spec in config.classes().items()}
     assert targets["FR"][1] < targets["AWD"][0] and targets["FR"][1] < targets["FF"][0]
+    # FF (the easy-to-turn car) is the slowest: its quickest allowed 0-100 is behind AWD's slowest.
+    assert targets["AWD"][1] <= targets["FF"][0]
     specs = config.classes()
     assert specs["FR"]["Chassis"]["ComX"] < 0  # weight on the driven rear axle
     assert specs["FR"]["Assist"]["PowerOversteer"] > specs["AWD"]["Assist"]["PowerOversteer"] > specs["FF"]["Assist"]["PowerOversteer"]
@@ -178,3 +181,35 @@ def test_model_acceleration_order():
         run.accel_brake()
         times[name] = run.metrics["Accel0To100S"]
     assert times["FR"] + 0.5 < times["AWD"] < times["FF"], times
+
+
+# UE 5.8 HK.DriveTest runs (2026-11-03). fixtures/vehicles_<run>.json is the exact vehicles.json each
+# run used. drivetest1: pre-retune JSON, brakes torque-limited. drivetest2: drivefix2, grip-limited.
+# IN-SAMPLE: the model's constants (MU_PER_FRICTION, MU_SCALE_BY_DRIVE, LONG_MU_SCALE,
+# BRAKE_TORQUE_SCALE) were fitted to these same runs, so passing says the fit has not drifted, not
+# that the model predicts a new tune. Only a new HK.DriveTest validates a retune.
+UE_RUNS = {
+    "drivetest1": {
+        "FR": {"Accel0To100S": 3.52, "SlalomYawGain": 40.8, "LatG120": 1.70, "TopSpeedKmh": 252, "Brake100To0M": 23.35},
+        "FF": {"Accel0To100S": 4.85, "SlalomYawGain": 38.4, "LatG120": 1.77, "TopSpeedKmh": 213, "Brake100To0M": 22.73},
+        "AWD": {"Accel0To100S": 5.38, "SlalomYawGain": 36.2, "LatG120": 1.72, "TopSpeedKmh": 236, "Brake100To0M": 21.92},
+    },
+    "drivetest2": {
+        "FR": {"Accel0To100S": 4.58, "SlalomYawGain": 41.9, "LatG120": 1.18, "TopSpeedKmh": 252, "Brake100To0M": 33.83},
+        "FF": {"Accel0To100S": 6.20, "SlalomYawGain": 45.9, "LatG120": 1.34, "TopSpeedKmh": 213, "Brake100To0M": 30.29},
+        "AWD": {"Accel0To100S": 5.38, "SlalomYawGain": 36.2, "LatG120": 1.45, "TopSpeedKmh": 236, "Brake100To0M": 28.15},
+    },
+}
+UE_TOLERANCE = {"Accel0To100S": 0.13, "SlalomYawGain": 0.10, "LatG120": 0.15, "TopSpeedKmh": 0.03,
+                "Brake100To0M": 0.16}
+
+
+@pytest.mark.skipif(not HAS_GXX, reason="g++ not installed")
+@pytest.mark.parametrize("run,name", [(r, n) for r in sorted(UE_RUNS) for n in sorted(UE_RUNS[r])])
+def test_model_reproduces_ue_runs(run, name):
+    from tools.drive_model.tests import Run
+
+    spec = config.classes(config.load(FIXTURES / f"vehicles_{run}.json"))[name]
+    metrics = Run(spec).all()
+    for key, ue in UE_RUNS[run][name].items():
+        assert abs(metrics[key] - ue) <= UE_TOLERANCE[key] * ue, (key, metrics[key], ue)
