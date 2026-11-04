@@ -39,20 +39,23 @@ namespace
 		{
 			return Out;
 		}
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Over->Values)
+		for (const auto& Pair : Over->Values)
 		{
-			if (Pair.Key.StartsWith(TEXT("_")))
+			// Builds the key through operator* so it compiles whether FJsonObject keys are FString or
+			// another TCHAR string type (built and run on 5.8 with drivefix2).
+			const FString Key(*Pair.Key);
+			if (Key.StartsWith(TEXT("_")))
 			{
 				continue;
 			}
-			const TSharedPtr<FJsonValue>* Existing = Out->Values.Find(Pair.Key);
-			if (Existing && (*Existing)->Type == EJson::Object && Pair.Value->Type == EJson::Object)
+			const TSharedPtr<FJsonValue> Existing = Out->TryGetField(Key);
+			if (Existing.IsValid() && Existing->Type == EJson::Object && Pair.Value->Type == EJson::Object)
 			{
-				Out->SetObjectField(Pair.Key, Merge((*Existing)->AsObject(), Pair.Value->AsObject()));
+				Out->SetObjectField(Key, Merge(Existing->AsObject(), Pair.Value->AsObject()));
 			}
 			else
 			{
-				Out->Values.Add(Pair.Key, Pair.Value);
+				Out->SetField(Key, Pair.Value);
 			}
 		}
 		return Out;

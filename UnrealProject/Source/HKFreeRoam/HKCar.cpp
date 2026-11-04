@@ -182,7 +182,12 @@ void AHKCar::ApplyHandling()
 	Move->DownforceCoefficient = 0.f; // the assist adds downforce
 	Move->ChassisWidth = 190.f;
 	Move->ChassisHeight = 70.f;
-	Move->IdleBrakeInput = H.Chassis.IdleBrake;
+	// IdleBrakeInput is protected on UChaosVehicleMovementComponent in 5.8; set it through its UPROPERTY.
+	static FFloatProperty* const IdleBrake = FindFProperty<FFloatProperty>(UChaosVehicleMovementComponent::StaticClass(), TEXT("IdleBrakeInput"));
+	if (IdleBrake)
+	{
+		IdleBrake->SetPropertyValue_InContainer(Move, H.Chassis.IdleBrake);
+	}
 
 	FVehicleEngineConfig& Engine = Move->EngineSetup;
 	Engine.MaxTorque = H.Engine.MaxTorqueNm;
@@ -546,7 +551,7 @@ void AHKCar::PossessedBy(AController* NewController)
 	GetMesh()->SetUseCCD(true);
 	if (UChaosWheeledVehicleMovementComponent* Move = Movement())
 	{
-		Move->SetHandbrakeInput(0.f);
+		Move->SetHandbrakeInput(false);
 		Move->SetBrakeInput(0.f);
 	}
 	DriverInput = hkdrive::Input();
@@ -615,7 +620,7 @@ void AHKCar::Park()
 		Move->SetThrottleInput(0.f);
 		Move->SetSteeringInput(0.f);
 		Move->SetBrakeInput(1.f);
-		Move->SetHandbrakeInput(1.f);
+		Move->SetHandbrakeInput(true);
 	}
 }
 
@@ -743,7 +748,7 @@ void AHKCar::DriveTick(float DeltaSeconds)
 		Move->SetThrottleInput(In.Throttle);
 		Move->SetBrakeInput(In.Brake);
 		Move->SetSteeringInput(In.Steer);
-		Move->SetHandbrakeInput(In.bHandbrake ? 1.f : 0.f);
+		Move->SetHandbrakeInput(In.bHandbrake);
 		VisualSteerDegrees = In.Steer * H.Assist.MaxSteerDeg;
 		Telem.Assist = hkdrive::Output();
 		return;
@@ -774,7 +779,7 @@ void AHKCar::DriveTick(float DeltaSeconds)
 	Move->SetThrottleInput(Out.Throttle);
 	Move->SetBrakeInput(Out.Brake);
 	Move->SetSteeringInput(Out.Steer);
-	Move->SetHandbrakeInput(Out.Handbrake);
+	Move->SetHandbrakeInput(Out.Handbrake > 0.5f);
 	VisualSteerDegrees = Out.Steer * H.Assist.MaxSteerDeg;
 
 	for (int32 Index = 0; Index < Move->GetNumWheels() && Index < 4; ++Index)
