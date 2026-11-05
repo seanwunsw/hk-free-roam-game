@@ -47,6 +47,7 @@ from tools.pipeline import rail as railnet
 from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
 from tools.pipeline import spawns as spawn_rules
+from tools.pipeline import warp_probe
 from tools.pipeline.surface import quantize_r16, sample_ue
 
 ROAD_CLASS_SET = set(ROAD_CLASSES)
@@ -1921,6 +1922,10 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         road["center"] = np.column_stack([road["xy"], mid])
         road["width"] = float(np.max(road["hl"] + road["hr"]))
     roads = [road for road in roads if "center" in road]
+    # Heights are already final. This only records lane width, bridge-end steps
+    # and the Tuen Mun Road / Castle Peak Road gap for the warp comparison.
+    road_stats["warp_probe"] = warp_probe.summarise(roads, warp, surface_at)
+    log(f"warp probe {json.dumps(road_stats['warp_probe'])}")
     road_stats["ribbon_junction_spread"] = road_graph.junction_spread(roads, "center", ("ground", "tunnel", "bridge"))
     road_stats["ribbon_junction_spread_ground"] = road_graph.junction_spread(roads, "center", ("ground",))
     road_stats["ribbon_grade_ground"] = road_graph.grade_stats(roads, "center")
