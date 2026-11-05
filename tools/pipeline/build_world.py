@@ -47,6 +47,7 @@ from tools.pipeline import rail as railnet
 from tools.pipeline import road_graph
 from tools.pipeline import roads as roadnet
 from tools.pipeline import spawns as spawn_rules
+from tools.pipeline import warp_probe
 from tools.pipeline.surface import quantize_r16, sample_ue
 
 ROAD_CLASS_SET = set(ROAD_CLASSES)
@@ -1921,6 +1922,10 @@ def build_real(root: Path, config, warp, out: Path, log: Log) -> dict:
         road["center"] = np.column_stack([road["xy"], mid])
         road["width"] = float(np.max(road["hl"] + road["hr"]))
     roads = [road for road in roads if "center" in road]
+    # Heights are already final. This only records lane width, bridge-end steps
+    # and the Tuen Mun Road / Castle Peak Road gap for the warp comparison.
+    road_stats["warp_probe"] = warp_probe.summarise(roads, warp, surface_at)
+    log(f"warp probe {json.dumps(road_stats['warp_probe'])}")
     road_stats["ribbon_junction_spread"] = road_graph.junction_spread(roads, "center", ("ground", "tunnel", "bridge"))
     road_stats["ribbon_junction_spread_ground"] = road_graph.junction_spread(roads, "center", ("ground",))
     road_stats["ribbon_grade_ground"] = road_graph.grade_stats(roads, "center")
@@ -2095,7 +2100,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
     long_axis = float(extent["long_axis_m"])
     min_harbour = float(min(widths)) if widths else None
     limitations = [
-        "The warp is separable: scale_x depends only on easting and scale_y only on northing, plus a smooth harbour widening. Islands that share a meridian with the core cannot be 1:10 on both axes without folding the core or pinching it.",
+        "The warp is separable: scale_x depends only on easting and scale_y only on northing, plus a smooth harbour widening. Easting and northing each fall from 0.40 in the core to a shared 0.30 floor, so a place on the same meridian as the core cannot be scaled on easting independently of the core.",
         "Tunnels, including cross-harbour tubes, are open cuts. The deck is the chord between the portals, clamped so it stays above the water plane. There is no bored tunnel and no tunnel roof.",
         "Building courtyards (OSM inner rings) are filled. building:part footprints may still overlap the parent footprint when the part is taller.",
         "Residential, living_street and service roads are drivable (service minus parking aisles, drive-throughs and emergency access). footway, pedestrian and steps are thin walk strips on the terrain, not in the road graph; path, sidewalk and crossing are skipped. There is no ferry; walk or fly between islands.",
