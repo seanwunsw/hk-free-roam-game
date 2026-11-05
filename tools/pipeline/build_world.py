@@ -2095,7 +2095,7 @@ def write_outputs(out: Path, config, warp, built: dict, native: dict, started: f
     long_axis = float(extent["long_axis_m"])
     min_harbour = float(min(widths)) if widths else None
     limitations = [
-        "The warp is separable: scale_x depends only on easting and scale_y only on northing, plus a smooth harbour widening. Islands that share a meridian with the core cannot be 1:10 on both axes without folding the core or pinching it.",
+        "The warp is separable: scale_x depends only on easting and scale_y only on northing, plus a smooth harbour widening. Easting and northing each fall from 0.40 in the core to a shared 0.30 floor, so a place on the same meridian as the core cannot be scaled on easting independently of the core.",
         "Tunnels, including cross-harbour tubes, are open cuts. The deck is the chord between the portals, clamped so it stays above the water plane. There is no bored tunnel and no tunnel roof.",
         "Building courtyards (OSM inner rings) are filled. building:part footprints may still overlap the parent footprint when the part is taller.",
         "Residential, living_street and service roads are drivable (service minus parking aisles, drive-throughs and emergency access). footway, pedestrian and steps are thin walk strips on the terrain, not in the road graph; path, sidewalk and crossing are skipped. There is no ferry; walk or fly between islands.",

@@ -103,6 +103,27 @@ def test_far_field_shift_is_uniform_no_shear():
         assert np.ptp(gy) < 1.0, (y, float(np.ptp(gy)))
 
 
+def test_bounded_profile_anisotropy():
+    # Core 0.40 and outer floor 0.30: away from the harbour widening, east and
+    # north scales differ by at most 0.40/0.30. The map stays inside today's
+    # 23.4 x 18.9 km and under target_long_axis_max_m.
+    warp = build_warp(load_config())
+    bounds = warp.config["bounds"]
+    lon, lat = np.meshgrid(
+        np.linspace(bounds["min_lon"], bounds["max_lon"], 80),
+        np.linspace(bounds["min_lat"], bounds["max_lat"], 60),
+    )
+    rx, ry = warp.lonlat_to_real_m(lon, lat)
+    dx = np.asarray(warp._deriv(warp.x0, warp.x_step, warp.G, rx))
+    dy = np.asarray(warp._deriv(warp.y0, warp.y_step, warp.H, ry))
+    ratio = np.maximum(dx, dy) / np.minimum(dx, dy)
+    assert float(ratio.max()) <= 1.35
+    extent = warp.geographic_extent_m()
+    assert extent["width_m"] < 24000
+    assert extent["height_m"] < 19200
+    assert extent["long_axis_m"] <= warp.config["target_long_axis_max_m"]
+
+
 def test_central_to_tst_wider_than_minimum():
     warp = build_warp(load_config())
     _, south = warp.lonlat_to_game_m(114.168, 22.2870)
