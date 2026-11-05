@@ -188,3 +188,74 @@ Paste these back. Median of three standalone runs, 1920×1080, vsync off, first 
 5. Which single A/B toggle moved GPU milliseconds the most, and by how much.
 6. The first-load time, listed separately from the steady FPS.
 7. If `E:\UE_5.8\Engine\Config\BaseScalability.ini` already sets `r.Lumen.ScreenProbeGather.DownsampleFactor` above 32 at `GlobalIlluminationQuality@2`, or a directional virtual-shadow bias above 1 at `ShadowQuality@2`, quote those two lines. The overrides in this branch would then be the more expensive of the two.
+
+## Bounded warp (2026-11-04)
+
+Warp-only. `tools/pipeline/roads.py`, `road_graph.py` and `check_roads.py` were not edited, and no road-height parameter was added. Measure this table again after the bridge-height fix. This machine did not compile, bake or play the project. [not verified in UE]
+
+### What changed
+
+`scale_x_knots_m` and `scale_y_knots_m` in `data/config/world.json`. Each axis is 0.40 from the origin out to 14 km east and 11 km north, then falls to 0.30 by 25 km east and 19 km north, and stays 0.30. The previous knots were 0.50 in that core, 0.1666667 on the shoulder, and 0.10 outside. Harbour widening is the same: amplitude 700 m, tanh width 340 m.
+
+`MIN_LANE_M` stays 3.0. A 3.5 m real lane times 0.40 is 1.4 m, which is under the 1.90 m chassis (`AHKCar`, `ChassisWidth = 190`) and under the 2.0 m spawn envelope (`CAR_HALF_WIDTH_M`). The 3.0 m floor is that drivable minimum: 0.55 m each side of the 1.90 m body. Of drivable centreline length, 98.35% was already on the floor and 98.50% still is, so a lower floor would narrow roads the car needs. The narrowest ribbon is 3.0 m (Haiphong Road). A merged ribbon divided by its lane count can read 1.0 m (three counted lanes on a 3.0 m ribbon). The car sits in the 3.0 m ribbon.
+
+### Why
+
+Separable east and north scales differed by up to 5.00 on land (0.50 against the 0.10 floor), and by 3.06 to 3.37 at the airport, Fanling and Sheung Shui. Tuen Mun was 0.297 east by 0.500 north. That stretch is what pulls roads, ramps and junctions out of shape. Height scale is the square root of the geometric-mean horizontal scale, so the same knots change grades. The new pair caps the separable ratio at 0.40/0.30 = 1.333. The long axis stays under `target_long_axis_max_m` (25000 m) and a little under today's map. Harbour clearance, including Lei Yue Mun, stays above `min_harbour_width_m` (1000 m).
+
+### How this was measured
+
+Both columns are one full `python3 tools/run_pipeline.py` on this machine. Before is `HEAD`'s `world.json` written to `/tmp/hk-before` (422.8 s, `ok: true`). After is this branch written to `/tmp/hk-after` (394.6 s, `ok: true`). Map size, harbour section width, place scales, overlap, grade, tiles and triangles are `logs/report.json`. The same run stores `road_heights.warp_probe` (lane floor, bridge-end steps, Tuen Mun Road gap). `python3 -m tools.hkwarp.check_map` on this branch exited 0. `python3 -m tools.pipeline.check_roads` ran on both output directories.
+
+Separable distortion is `max(G', H') / min(G', H')` on a 240×180 lon/lat grid over `bounds`, on cells the committed OSM land mask marks as land. `G'` and `H'` are the knot integrals, without the harbour `sech²` term. The full-axis ratio is `WarpModel.axis_scales`, which includes that term. Place scales are `axis_scales` at the place. Sheung Shui is 114.128° E, 22.501° N. Tung Chung is the `Lantau` place, 113.948° E, 22.289° N.
+
+Grade is the share of ground centreline steeper than 0.30 (`GRADE` in `road_graph.py`) by more than 0.005, once for the design profile and once for the built ribbon. Bridge-end steps: a non-`deck_fixed` bridge sample at most 1 m, along that bridge, from a ground terminal, matched to the nearest ground or tunnel sample within 3 m; the step threshold is 0.45 m. The Tuen Mun Road ratio is the bridge sample of that name nearest the probe 113.98084° E, 22.38273° N that also lies within 25 m of a Castle Peak Road sample, divided by that sample's centreline Z.
+
+`data/processed` in git is still the previous bake. Run the pipeline into `data/processed` before the next Unreal bake, or the baker will keep the old warp. [not verified in UE]
+
+### Before / after
+
+| | Before (0.50 / 0.10) | After (0.40 / 0.30) |
+| --- | --- | --- |
+| Map size | 23419.5 × 18855.2 m | 23221.3 × 18510.1 m |
+| Long axis | 23419.5 m | 23221.3 m |
+| Max separable distortion on land | 5.00 | 1.333 |
+| Full-axis ratio on land, max / p99 | 12.51 / 4.97 | 6.77 / 1.333 |
+| Central scale E, N (ratio) | 0.500, 0.563 (1.12) | 0.400, 0.463 (1.16) |
+| Tuen Mun | 0.297, 0.500 (1.69) | 0.339, 0.400 (1.18) |
+| Yuen Long | 0.479, 0.241 (1.99) | 0.394, 0.322 (1.22) |
+| Tai Po | 0.500, 0.207 (2.42) | 0.400, 0.312 (1.28) |
+| Tung Chung (`Lantau`) | 0.188, 0.500 (2.65) | 0.307, 0.400 (1.30) |
+| Sheung Shui | 0.500, 0.148 (3.37) | 0.400, 0.300 (1.33) |
+| Fanling | 0.500, 0.156 (3.21) | 0.400, 0.300 (1.33) |
+| Airport | 0.163, 0.500 (3.06) | 0.300, 0.400 (1.33) |
+| Tiles | 3168 | 2778 (−12.3%) |
+| Triangles | 4,463,978 | 4,018,637 (−10.0%) |
+| glTF / heightmap / PNG | 502.3 / 14.9 / 9.5 MB | 467.8 / 14.2 / 9.1 MB |
+| Landscape grid | 3025 × 2458, ~7.98 m | 2962 × 2395, ~8.05 m |
+| Harbour section min | 1327.5 m | 1263.4 m |
+| Lei Yue Mun clearance | 1084.7 m | 1044.6 m |
+| Building–road overlaps | 2 buildings, 13.0 m², carriageway 0 | 5 buildings, 7.5 m², carriageway 0 |
+| Ground length over grade 0.30, design | 1.294% | 1.103% |
+| Same, built ribbon | 3.071% | 2.926% |
+| Bridge-end steps ≥ 0.45 m | 748 / 2006 matched (37.29%), max 26.42 m | 703 / 1865 matched (37.69%), max 29.00 m |
+| Tuen Mun Road / Castle Peak Road | Z 11.683 / 8.446, gap 3.238 m, ratio 1.383 | Z 11.812 / 8.756, gap 3.057 m, ratio 1.349 |
+| Narrowest drivable ribbon | 3.0 m (floor 3.0; car 1.90 m) | 3.0 m (floor 3.0; car 1.90 m) |
+
+The full-axis maximum is the harbour widening, a thin band: after the change, 99% of land cells have a full-axis ratio of 1.333 or less. Tuen Mun in 1:N form goes from 1:3.4 east–west by 1:2.0 north–south to 1:2.9 by 1:2.5. Tile and triangle counts are the bake-time proxy. Unreal bake time and committed LFS size were not measured; the pipeline's glTF is 34.5 MB smaller (−6.9%) and the heightmap 0.7 MB smaller. [not verified in UE]
+
+The bridge-end count is the current deck solver seen through game-space distances. Deck code did not change. A 3 m horizontal match can still pick up a parallel road, which is why the max step is tens of metres. Re-measure after the bridge fix.
+
+### Spawn and HK.DriveTest
+
+`TuenMun` is still `player_start`. The pipeline puts the player `PLAYER_GAP_M` (3.0 m) beside car `TuenMun_0` on a ground road. After the warp both are on the ribbon, 3.0 m apart, same yaw (−77.3°). The car's heading error against that centreline is 0.01° (was 0.24°). Its body fits: lateral offset 6.05 m on a ribbon whose left half is 7.26 m, chassis half-width 1.0 m. `check_roads` reports no spawn inside a building, none floating by more than 0.3 m, and the player on the surface under it. The same was true before.
+
+`HK.DriveTest` anchors the pad on actor `TuenMun_0` and builds it at Z = 200000 cm, 2 km up (`PadZCm` in `HKDriveTest.cpp`). The pad is 6 km along world +X and does not follow city roads. Terrain from `terrain.r16` peaks at 658 m before and 595 m after, so the pad stays clear of the landscape. [not verified in UE]
+
+Two other cars are on a ribbon but no longer aligned with the nearest centreline segment in `spawn_roads.json`: `Fanling_0` at 36.0° and `KwunTong_0` at 21.6°. Neither is wrong-way. `TuenMun_0` is not one of them.
+
+### Checks on this machine
+
+- `python3 -m tools.hkwarp.check_map`: exit 0. Extent 23221 × 18510 m. Harbour sections min 1263 m. Lei Yue Mun clearance 1045 m.
+- `python3 -m tools.pipeline.check_roads` on both outputs: ground ribbons within 0.45 m of the terrain on 99.94% of their area. Stacked road area with a gap over 0.45 m went from 2.47% to 2.65%.
+- `python3 -m pytest tools/tests -q`: 102 passed, 4 skipped, 1 failed. `test_real_traffic_light_stands_on_its_pole_with_the_lenses_facing_east` raises `KeyError: 'hk_traffic_light'` because `data/props/hk_traffic_light/hong_kong_traffic_light.glb` in this checkout is a Git LFS pointer, not a mesh. That test does not read the warp.
